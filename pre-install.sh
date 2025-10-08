@@ -1,41 +1,36 @@
 #!/bin/bash
 
-# Build dependencies
-## This is mostly a copy-and-paste work from immich's base image
-
-set -xeuo pipefail # Make people's life easier
-
-# -------------------
-# Common variables
-# -------------------
-
-SCRIPT_DIR=$PWD
-BASE_IMG_REPO_DIR=$SCRIPT_DIR/base-images
-SOURCE_DIR=$SCRIPT_DIR/image-source
-LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
-LD_RUN_PATH=/usr/local/lib # :$LD_RUN_PATH
-
-
 # -------------------
 # Git clone function
 # -------------------
 
-function git_clone () {
-    # $1 is repo URL
-    # $2 is clone target folder
-    # $3 is branch name
-    if [ ! -d "$2" ]; then
-        git clone "$1" "$2"
+git_clone () {
+    # $1 = repo URL
+    # $2 = target dir
+    # $3 = branch name
+
+    if [ ! -d "$2/.git" ]; then
+        echo "Cloning $1 -> $2 (branch: $3)"
+        git clone --depth 1 --branch "$3" "$1" "$2" || {
+            echo "Branch $3 not found, cloning default branch..."
+            git clone "$1" "$2"
+        }
     fi
-    git config --global --add safe.directory $2
-    cd $2
-    # Get updates
-    git fetch
-    # REMOVE all the change one made to source repo, which is sth not supposed to happen
-    git reset FETCH_HEAD --hard
-    # In case one is not on the branch
-    git reset --hard "$3"
+
+    git config --global --add safe.directory "$2"
+    cd "$2" || exit 1
+
+    # Ensure refs are up to date
+    git fetch origin "$3" --depth=1 || git fetch origin --unshallow
+
+    # Verify the branch ref exists remotely
+    if git show-ref --verify --quiet "refs/remotes/origin/$3"; then
+        git checkout -B "$3" "origin/$3"
+    else
+        echo "Warning: branch '$3' not found in remote, staying on current HEAD"
+    fi
 }
+
 
 # -------------------
 # Remove build folder function
@@ -66,6 +61,7 @@ install_runtime_component () {
 # -------------------
 
 install_build_dependency () {
+    cd $SCRIPT_DIR
     # Source the os-release file to get access to its variables
     if [ -f /etc/os-release ]; then
         # $ID comes from here
@@ -102,22 +98,28 @@ install_build_dependency () {
         zlib1g \
         cpanminus
 
-    # Install for imagick
+    # Install for imagick & sharp
     apt-get install --no-install-recommends -y\
         libtool \
-        liblcms2-dev \
+        libheif-dev \
+        libaom-dev \
+        libde265-dev \
+        libx265-dev \
         libgif-dev \
         libpango1.0-dev \
         libjpeg-dev \
         libpng-dev \
         libtiff-dev \
-        libwebp-dev \
         liblcms2-dev \
         libxml2-dev \
         libfftw3-dev \
         libopenexr-dev \
         libzip-dev \
-        libde265-dev 
+        libde265-dev \
+        libvips-dev \
+        g++ \
+        libimagequant-dev
+
 
     # Check the ID and execute the corresponding script
     case "$ID" in
@@ -332,8 +334,8 @@ build_libheif () {
         -DWITH_LIBSHARPYUV=ON \
         -DWITH_LIBDE265=ON \
         -DWITH_AOM_DECODER=OFF \
-        -DWITH_AOM_ENCODER=OFF \
-        -DWITH_X265=OFF \
+        -DWITH_AOM_ENCODER=ON \
+        -DWITH_X265=ON \
         -DWITH_EXAMPLES=OFF \
         ..
     make install -j "$(nproc)"
@@ -435,7 +437,6 @@ build_libvips () {
     remove_build_folder $SOURCE
 }
 
-
 # -------------------
 # Remove build dependency
 # -------------------
@@ -463,8 +464,6 @@ remove_build_dependency () {
         libjpeg-dev \
         libpng-dev \
         libtiff-dev \
-        libwebp-dev \
-        liblcms2-dev \
         libxml2-dev \
         libfftw3-dev \
         libopenexr-dev \
@@ -472,7 +471,6 @@ remove_build_dependency () {
         libde265-dev 
 }
 
-# remove_build_dependency
 
 # -------------------
 # Add runtime dependency
@@ -510,8 +508,22 @@ add_runtime_dependency () {
         libhwy1t64
 }
 
+set -xeuo pipefail # Make people's life easier
+
+# -------------------
+# Common variables
+# -------------------
+
+SCRIPT_DIR=$PWD
+REPO_URL="https://github.com/immich-app/base-images"
+APP_REPO_URL="https://github.com/immich-app/immich"
+BASE_IMG_REPO_DIR=$SCRIPT_DIR/base-images
+SOURCE_DIR=$SCRIPT_DIR/image-source
+LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
+LD_RUN_PATH=/usr/local/lib # :$LD_RUN_PATH
 
 
+git_clone "$REPO_URL" "$BASE_IMG_REPO_DIR" main
 install_runtime_component
 install_build_dependency
 install_ffmpeg
@@ -524,4 +536,5 @@ build_libheif
 build_libraw
 build_image_magick
 build_libvips
+# remove_build_dependency <- currently required by install step
 add_runtime_dependency

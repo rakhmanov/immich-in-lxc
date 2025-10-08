@@ -174,9 +174,6 @@ create_folders () {
     # No need to create source folder
     mkdir -p $INSTALL_DIR_app
 
-    # Machine learning component
-    mkdir -p $INSTALL_DIR_ml
-
     # Upload directory
     if [ ! -d "$UPLOAD_DIR" ]; then
         echo "$UPLOAD_DIR does not exists, creating one"
@@ -227,19 +224,21 @@ install_immich_web_server_pnpm () {
         pnpm config set registry=$PROXY_NPM
     fi
 
-    rm -r $INSTALL_DIR_app 
-
     # Install dependencies
     pnpm install --frozen-lockfile
-    npm_config_sharp_binary_host="" SHARP_FORCE_GLOBAL_LIBVIPS=true pnpm install
 
+    # Use global LibVips - happens by default no flags needed
     pnpm --filter immich --frozen-lockfile build
-    # Fix for Unsupported compression heifsave
-    rm -r $INSTALL_DIR_src/node_modules/.pnpm/sharp@*
-    npm install --no-save --build-from-source --verbose sharp
+
+    # Build SDK
     pnpm --filter @immich/sdk --filter immich-web --frozen-lockfile build
+
     # Build and deploy the server component.
-    pnpm --filter immich --prod deploy $INSTALL_DIR_app
+    # This part does not copy does not copy prebuilt sharp 
+    #   which is built against our system.
+    pnpm --filter immich --prod deploy "$INSTALL_DIR_app"
+    # So we are rebuilding Sharp again that it links correctly
+    (cd $INSTALL_DIR_app/node_modules/sharp; npm rebuild sharp --build-from-source)
 
     # Build and deploy the CLI.
     pnpm --filter @immich/cli --frozen-lockfile --prod --no-optional deploy $INSTALL_DIR_app/cli
@@ -508,9 +507,7 @@ confirm_destruction() {
     return 0
 }
 
-
 set -xeuo pipefail # Make people's life easier
-
 
 check_user_id
 create_install_env_file
