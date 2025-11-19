@@ -1,41 +1,28 @@
 #!/bin/bash
 
-# Build dependencies
-## This is mostly a copy-and-paste work from immich's base image
+# -------------------
+# Include helper functions
+# Such as git safe_git_checkout, set_user_to_run
+# -------------------
+source "./helpers.sh"
 
-set -xeuo pipefail # Make people's life easier
 
 # -------------------
 # Common variables
 # -------------------
-
-SCRIPT_DIR=$PWD
-REPO_URL="https://github.com/immich-app/base-images"
-BASE_IMG_REPO_DIR=$SCRIPT_DIR/base-images
-SOURCE_DIR=$SCRIPT_DIR/image-source
-LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
-LD_RUN_PATH=/usr/local/lib # :$LD_RUN_PATH
-
-# -------------------
-# Git clone function
-# -------------------
-
-function git_clone () {
-    # $1 is repo URL
-    # $2 is clone target folder
-    # $3 is branch name
-    if [ ! -d "$2" ]; then
-        git clone "$1" "$2"
-    fi
-    git config --global --add safe.directory $2
-    cd $2
-    # Get updates
-    git fetch
-    # REMOVE all the change one made to source repo, which is sth not supposed to happen
-    git reset FETCH_HEAD --hard
-    # In case one is not on the branch
-    git reset --hard "$3"
+set_common_variables () {
+    set -a
+    SCRIPT_DIR=$PWD
+    REPO_URL="https://github.com/immich-app/base-images"
+    APP_REPO_URL="https://github.com/immich-app/immich"
+    BASE_IMG_REPO_DIR=$SCRIPT_DIR/base-images
+    SOURCE_DIR=$SCRIPT_DIR/image-source
+    LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
+    LD_RUN_PATH=/usr/local/lib # :c$LD_RUN_PATH
+    set_user_to_run # Sets $USER_TO_RUN
+    set +a
 }
+
 
 # -------------------
 # Remove build folder function
@@ -60,13 +47,13 @@ install_runtime_component () {
         redis
 }
 
-install_runtime_component
 
 # -------------------
 # Install build dependency
 # -------------------
 
 install_build_dependency () {
+    cd $SCRIPT_DIR
     # Source the os-release file to get access to its variables
     if [ -f /etc/os-release ]; then
         # $ID comes from here
@@ -102,11 +89,30 @@ install_build_dependency () {
         wget \
         zlib1g \
         cpanminus
-        
 
-    ## Learned from compile failure
-    apt install -y libtool liblcms2-dev libgif-dev libpango1.0-dev
-    
+    # Install for imagick & sharp
+    apt-get install --no-install-recommends -y\
+        libtool \
+        libheif-dev \
+        libaom-dev \
+        libde265-dev \
+        libx265-dev \
+        libgif-dev \
+        libpango1.0-dev \
+        libjpeg-dev \
+        libpng-dev \
+        libtiff-dev \
+        liblcms2-dev \
+        libxml2-dev \
+        libfftw3-dev \
+        libopenexr-dev \
+        libzip-dev \
+        libde265-dev \
+        libvips-dev \
+        g++ \
+        libimagequant-dev
+
+
     # Check the ID and execute the corresponding script
     case "$ID" in
         ubuntu)
@@ -145,7 +151,6 @@ install_build_dependency () {
     esac
 }
 
-install_build_dependency
 
 # -------------------
 # Install ffmpeg automatically
@@ -167,8 +172,6 @@ install_ffmpeg () {
     fi
 
 }
-
-install_ffmpeg
 
 
 # -------------------
@@ -198,14 +201,6 @@ install_postgresql () {
     runuser -u postgres -- psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE'
 }
 
-install_postgresql
-
-# -------------------
-# Clone the base images repo
-# -------------------
-
-git_clone $REPO_URL $BASE_IMG_REPO_DIR main
-
 # -------------------
 # Change lock file permission
 # -------------------
@@ -215,7 +210,6 @@ change_permission () {
     chmod 666 $BASE_IMG_REPO_DIR/server/sources/*.json
 }
 
-change_permission
 
 # -------------------
 # Setup folders
@@ -227,9 +221,9 @@ setup_folders () {
     if [ ! -d "$SOURCE_DIR" ]; then
         mkdir $SOURCE_DIR
     fi
+    sudo chown -R $USER_TO_RUN:$USER_TO_RUN $SOURCE_DIR
 }
 
-setup_folders
 
 # -------------------
 # Change locale
@@ -240,7 +234,6 @@ change_locale () {
     locale-gen
 }
 
-change_locale
 
 # -------------------
 # Build libjxl
@@ -260,7 +253,7 @@ build_libjxl () {
     : "${LIBJXL_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/libjxl.json)}"
     set +e
 
-    git_clone https://github.com/libjxl/libjxl.git $SOURCE $LIBJXL_REVISION
+    safe_git_checkout https://github.com/libjxl/libjxl.git $SOURCE $LIBJXL_REVISION
 
     cd $SOURCE
 
@@ -306,7 +299,6 @@ build_libjxl () {
     rm -rf $SOURCE/third_party/
 }
 
-build_libjxl
 
 # -------------------
 # Build libheif
@@ -321,7 +313,7 @@ build_libheif () {
     : "${LIBHEIF_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/libheif.json)}"
     set +e
 
-    git_clone https://github.com/strukturag/libheif.git $SOURCE $LIBHEIF_REVISION
+    safe_git_checkout https://github.com/strukturag/libheif.git $SOURCE $LIBHEIF_REVISION
 
     cd $SOURCE
 
@@ -335,8 +327,8 @@ build_libheif () {
         -DWITH_LIBSHARPYUV=ON \
         -DWITH_LIBDE265=ON \
         -DWITH_AOM_DECODER=OFF \
-        -DWITH_AOM_ENCODER=OFF \
-        -DWITH_X265=OFF \
+        -DWITH_AOM_ENCODER=ON \
+        -DWITH_X265=ON \
         -DWITH_EXAMPLES=OFF \
         ..
     make install -j "$(nproc)"
@@ -347,27 +339,30 @@ build_libheif () {
     remove_build_folder $SOURCE
 }
 
-build_libheif
 
 # -------------------
 # Build libraw
 # -------------------
 
-build_libraw () {
-    cd $SCRIPT_DIR
+build_libraw() {
+    cd "$SCRIPT_DIR"
 
-    SOURCE=$SOURCE_DIR/libraw
+    SOURCE="$SOURCE_DIR/libraw"
 
     set -e
-    : "${LIBRAW_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/libraw.json)}"
+    : "${LIBRAW_REVISION:=$(jq -cr '.revision' "$BASE_IMG_REPO_DIR/server/sources/libraw.json")}"
     set +e
 
-    git_clone https://github.com/libraw/libraw.git $SOURCE $LIBRAW_REVISION
+    safe_git_checkout "https://github.com/libraw/libraw.git" "$SOURCE" "$LIBRAW_REVISION"
 
-    cd $SOURCE
-
+    cd "$SOURCE"
     autoreconf --install
-    ./configure
+
+    # Create an out-of-source build directory
+    mkdir -p build
+    cd build
+
+    ../configure
     echo "Building libraw using $(nproc) threads"
     make -j"$(nproc)"
     make install
@@ -375,9 +370,11 @@ build_libraw () {
 
     # Clean up builds
     make clean
+    cd ..
+    remove_build_folder "$SOURCE"
 }
 
-build_libraw
+
 
 # -------------------
 # Build image magick
@@ -392,21 +389,23 @@ build_image_magick () {
     : "${IMAGEMAGICK_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/imagemagick.json)}"
     set +e
 
-    git_clone https://github.com/ImageMagick/ImageMagick.git $SOURCE $IMAGEMAGICK_REVISION
+    safe_git_checkout https://github.com/ImageMagick/ImageMagick.git $SOURCE $IMAGEMAGICK_REVISION
 
     cd $SOURCE
 
-    ./configure --with-modules
+    ./configure --with-raw --with-modules
     echo "Building ImageMagick using $(nproc) threads"
     make -j"$(nproc)"
     make install
     ldconfig /usr/local/lib
+    
+    # Check
+    ldd $(which magick) | grep libraw
 
     # Clean up builds
     make clean
 }
 
-build_image_magick
 
 # -------------------
 # Build libvips
@@ -422,7 +421,7 @@ build_libvips () {
     : "${LIBVIPS_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/libvips.json)}"
     set +e
 
-    git_clone https://github.com/libvips/libvips.git $SOURCE $LIBVIPS_REVISION
+    safe_git_checkout https://github.com/libvips/libvips.git $SOURCE $LIBVIPS_REVISION
 
     cd $SOURCE
     
@@ -437,8 +436,6 @@ build_libvips () {
     # Clean up builds
     remove_build_folder $SOURCE
 }
-
-build_libvips
 
 # -------------------
 # Remove build dependency
@@ -459,9 +456,21 @@ remove_build_dependency () {
         libhwy-dev \
         libwebp-dev \
         libio-compress-brotli-perl
+    apt-get remove -y \
+        libtool \
+        liblcms2-dev \
+        libgif-dev \
+        libpango1.0-dev \
+        libjpeg-dev \
+        libpng-dev \
+        libtiff-dev \
+        libxml2-dev \
+        libfftw3-dev \
+        libopenexr-dev \
+        libzip-dev \
+        libde265-dev 
 }
 
-# remove_build_dependency
 
 # -------------------
 # Add runtime dependency
@@ -499,4 +508,22 @@ add_runtime_dependency () {
         libhwy1t64
 }
 
+
+set -xeuo pipefail # Make people's life easier
+
+set_common_variables
+safe_git_checkout "$REPO_URL" "$BASE_IMG_REPO_DIR" main
+install_runtime_component
+install_build_dependency
+install_ffmpeg
+install_postgresql
+change_permission
+setup_folders
+change_locale
+build_libjxl
+build_libheif
+build_libraw
+build_image_magick
+build_libvips
+# remove_build_dependency <- currently required by install step
 add_runtime_dependency
