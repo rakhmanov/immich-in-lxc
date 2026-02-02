@@ -277,7 +277,7 @@ install_immich_web_server_pnpm () {
             cd plugins
             pnpm install
             mise trust --all --yes
-            mise build --yes
+            mise build
         )
 
         # Trust
