@@ -46,23 +46,46 @@ safe_git_checkout() {
     local target_dir="$2"
     local ref="${3:-main}"
 
-    # If we're already the target user, just run directly
+    run_git_ops() {
+        set -euo pipefail
+
+        if [[ ! -d "$target_dir/.git" ]]; then
+            echo "📥 Cloning $repo_url -> $target_dir"
+            git clone "$repo_url" "$target_dir"
+        fi
+
+        echo "🔁 Forcing repo at $target_dir to origin/$ref"
+        cd "$target_dir"
+
+        git fetch --all --tags
+
+        if git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
+            # ref is a commit SHA or tag
+            git checkout --detach "$ref"
+        else
+            # ref is a branch
+            git checkout -B "$ref" "origin/$ref"
+            git reset --hard "origin/$ref"
+        fi
+
+        git clean -fdx
+
+        echo "✅ Repository ready at $target_dir (user: $(id -un))"
+    }
+
+    export repo_url target_dir ref
+    export -f run_git_ops
+
     if [[ "$(id -un)" == "$USER_TO_RUN" ]]; then
-        git_checkout_repo "$repo_url" "$target_dir" "$ref"
+        run_git_ops
         return
     fi
 
-    # If we're NOT root, and can't switch user, fail gracefully
     if [[ "$(id -un)" != "root" ]]; then
         echo "❌ Cannot switch to $USER_TO_RUN (not root)."
-        echo "Run this as $USER_TO_RUN or root."
         exit 1
     fi
 
-    # Run as the target non-root user
     echo "Switching to $USER_TO_RUN for git operations..."
-    su "$USER_TO_RUN" bash -c "
-        source '$BASH_SOURCE'
-        git_checkout_repo '$repo_url' '$target_dir' '$ref'
-    "
+    su "$USER_TO_RUN" -s /bin/bash -c "run_git_ops"
 }
