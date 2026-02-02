@@ -93,9 +93,7 @@ install_build_dependency () {
     # Install for imagick & sharp
     apt-get install --no-install-recommends -y\
         libtool \
-        libheif-dev \
         libaom-dev \
-        libde265-dev \
         libx265-dev \
         libgif-dev \
         libpango1.0-dev \
@@ -107,8 +105,7 @@ install_build_dependency () {
         libfftw3-dev \
         libopenexr-dev \
         libzip-dev \
-        libde265-dev \
-        libvips-dev \
+        libssl-dev \
         g++ \
         libimagequant-dev
 
@@ -371,7 +368,7 @@ build_libraw() {
     # Clean up builds
     make clean
     cd ..
-    remove_build_folder "$SOURCE"
+    remove_build_folder $SOURCE
 }
 
 
@@ -450,25 +447,31 @@ remove_build_dependency () {
         libgsf-1-dev \
         liblcms2-2 \
         librsvg2-dev \
-        libspng-dev
-    apt-get remove -y \
-        libdav1d-dev \
-        libhwy-dev \
-        libwebp-dev \
-        libio-compress-brotli-perl
-    apt-get remove -y \
-        libtool \
-        liblcms2-dev \
-        libgif-dev \
-        libpango1.0-dev \
-        libjpeg-dev \
-        libpng-dev \
-        libtiff-dev \
-        libxml2-dev \
-        libfftw3-dev \
-        libopenexr-dev \
-        libzip-dev \
-        libde265-dev 
+        libspng-dev \
+        libheif-dev \
+        libvips-dev
+
+# Manually finding what is safe to remove
+# and woun't be needed by install.sh which builds sharp from source
+
+    #   apt-get remove -y \
+    #     libdav1d-dev \
+    #     libhwy-dev \
+    #     libwebp-dev \
+    #     libio-compress-brotli-perl
+    # apt-get remove -y \
+    #     libtool \
+    #     liblcms2-dev \
+    #     libgif-dev \
+    #     libpango1.0-dev \
+    #     libjpeg-dev \
+    #     libpng-dev \
+    #     libtiff-dev \
+    #     libxml2-dev \
+    #     libfftw3-dev \
+    #     libopenexr-dev \
+    #     libzip-dev \
+    #     libde265-dev 
 }
 
 
@@ -508,7 +511,6 @@ add_runtime_dependency () {
         libhwy1t64
 }
 
-
 set -xeuo pipefail # Make people's life easier
 
 set_common_variables
@@ -525,5 +527,5 @@ build_libheif
 build_libraw
 build_image_magick
 build_libvips
-# remove_build_dependency <- currently required by install step
+remove_build_dependency
 add_runtime_dependency

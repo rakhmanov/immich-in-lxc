@@ -15,7 +15,9 @@ Supports:
 
 > High performance self-hosted photo and video management solution
 
-This fork of a https://github.com/loeeeee/immich-in-lxc which itself was heavily inspired by another project [Immich Native](https://github.com/arter97/immich-native), and the install script & service files are modified from the ones in that repo. KUDO to its author, arter97! 
+This is a fork of a https://github.com/loeeeee/immich-in-lxc which itself was inspired by [Immich Native](https://github.com/arter97/immich-native). A lot of work originated from that repo. 
+Huge kudos to the authors loeeeee and arter97! 
+
 Compared to Immich Native, this repo additionally offers the support for CUDA-accelerated machine learning and (out-of-box) support for processing HEIF, i.e. common smart phone image format, and RAW, i.e. common fancy big camera image format, images.
 
 
@@ -247,12 +249,12 @@ Also note: One should always do a snapshot of the media folder during the updati
 
 #### Configuring the installation
 
-The example configuration lives in install.env, create a copy and modify parameters.
+The example configuration lives in example.env, create a copy and modify parameters.
 Execute the script as `immich` user. 
 
 ```bash
 su immich
-cp install.env .env
+cp example.env .env
 ```
 
 - `REPO_TAG` is the version of the Immich that we are going to install,
@@ -347,7 +349,7 @@ systemctl stop immich-web
 
 After stopping the old instance, update this repo by doing a `git pull` in the folder `immich-in-lxc` (using the `immich` user). 
 
-Then, the modify `REPO_TAG` value in `.env` file based on the one in `install.env`. 
+Then, the modify `REPO_TAG` value in `.env` file based on the one in `example.env`. 
 
 Finally, run the `install.sh` and it will update Immich, hopefully without problems.
 

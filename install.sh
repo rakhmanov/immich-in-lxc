@@ -59,8 +59,8 @@ create_install_env_file () {
     # Check if env file exists
     if [ ! -f $SCRIPT_DIR/.env ]; then
         echo "Error: .env file not found"
-        echo "Create one by modifying an example file install.env"
-        echo "cp install.env .env"
+        echo "Create one by modifying an example file example.env"
+        echo "cp example.env .env"
         exit 1
     fi
 }
@@ -99,20 +99,22 @@ set_common_variables () {
 # -------------------
 
 review_install_information () {
+    echo ------------------Installation Configuration from .env------------------
     # Install Version
-    echo $REPO_TAG
+    echo Desired version: $REPO_TAG
     # Install Location
-    echo $INSTALL_DIR
+    echo Install Location: $INSTALL_DIR
     # Upload Location
-    echo $UPLOAD_DIR
+    echo Upload Location: $UPLOAD_DIR
     # Cuda or CPU
-    echo $isCUDA
+    echo isCUDA: $isCUDA
     # npm proxy
-    echo $PROXY_NPM
+    echo PROXY_NPM: $PROXY_NPM
     # npm dist proxy (used by node-gyp)
-    echo $PROXY_NPM_DIST
+    echo PROXY_NPM_DIST: $PROXY_NPM_DIST
     # poetry proxy
-    echo $PROXY_POETRY
+    echo PROXY_POETRY: $PROXY_POETRY
+    echo
 }
 
 
@@ -137,10 +139,11 @@ install_node () {
         echo "Installing pnpm"
         npm install -g pnpm@10
     fi
-
+    echo ------------------Current versions------------------
     echo "npm version: {$(npm -v)}"
     echo "node version: {$(node -v)}"
     echo "pnpm version: {$(pnpm -v)}"
+    echo
 }
 
 
@@ -220,6 +223,10 @@ create_folders () {
     mkdir -p $TMP_DIR
 }
 
+# -------------------
+# Apply version specific git patches
+# -------------------
+
 git_patch () {
     if [ -d "$SCRIPT_DIR/git-patches/$REPO_TAG" ]; then
         (
@@ -227,6 +234,24 @@ git_patch () {
             git apply $SCRIPT_DIR/git-patches/$REPO_TAG/*.patch
         )
     fi
+}
+
+# -------------------
+# Remove mise tools that we do not need for server install
+# -------------------
+mise_local_override() {
+    cd $INSTALL_DIR_src
+
+    cat > mise.local.toml <<'EOF'
+[settings]
+disable_tools = [
+  "flutter",
+  "java",
+  "opentofu",
+  "terragrunt"
+]
+EOF
+
 }
 
 # -------------------
@@ -255,7 +280,10 @@ install_immich_web_server_pnpm () {
     #   which is built against our system.
     pnpm --filter immich --prod deploy "$INSTALL_DIR_app"
     # So we are rebuilding Sharp again that it links correctly
-    (cd $INSTALL_DIR_app/node_modules/sharp; npm rebuild sharp --build-from-source)
+    (cd $INSTALL_DIR_app; pnpm add sharp --allow-build=sharp; pnpm rebuild sharp)
+    # pnpm add sharp -w --allow-build=sharp;
+    # pnpm rebuild sharp
+    # (cd $INSTALL_DIR_app/node_modules/sharp; npm rebuild sharp --build-from-source)
 
     # Build and deploy the CLI.
     pnpm --filter @immich/cli --frozen-lockfile --prod --no-optional deploy $INSTALL_DIR_app/cli
@@ -554,6 +582,7 @@ review_dependency
 clean_previous_build
 create_folders
 safe_git_checkout "$REPO_URL" "$INSTALL_DIR_src" "$REPO_TAG"
+mise_local_override
 git_patch
 install_immich_web_server_pnpm
 generate_build_lock
@@ -567,7 +596,7 @@ create_runtime_env_file
 echo "----------------------------------------------------------------"
 echo "Installation/Upgrade Completed"
 echo "----------------------------------------------------------------"
-echo "If this was intallation then please continue with post-install.sh."
+echo "If this was first intallation - run post-install.sh."
 echo "./post-install.sh"
 echo "----------------------------------------------------------------"
 echo "If this was an update, restart the services (as root):"
