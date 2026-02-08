@@ -90,7 +90,7 @@ set_common_variables () {
     INSTALL_DIR_geo=$INSTALL_DIR/geodata
     TMP_DIR=/tmp/$(whoami)/immich-in-lxc/
     REPO_URL="https://github.com/immich-app/immich"
-    NODE_OPTIONS="--max-old-space-size=4096"
+    NODE_OPTIONS="--max-old-space-size=5096"
     set +a
 }
 
