@@ -1,91 +1,74 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Decide which user should perform git actions ---
-set_user_to_run() {
-    if [[ -n "${RUN_USER:-}" ]]; then
-        USER_TO_RUN="$RUN_USER"
-    elif id immich &>/dev/null; then
-        USER_TO_RUN="immich"
-    else
-        USER_TO_RUN="$(id -un)"
-    fi
-    export USER_TO_RUN
+# -------------------------
+# Choose user for git ops
+# -------------------------
+choose_user() {
+  if [[ -n "${RUN_USER:-}" ]]; then
+    echo "$RUN_USER"
+  elif id immich &>/dev/null; then
+    echo immich
+  else
+    id -un
+  fi
 }
 
-# --- Core clone/update logic (no privilege switching) ---
-git_checkout_repo() {
-    local repo_url="$1"
-    local target_dir="$2"
-    local ref="${3:-main}"
+# -------------------------
+# Core git logic (DESTROYS local state)
+# -------------------------
+git_force_checkout() {
+  local repo="$1"
+  local dir="$2"
+  local ref="${3:-main}"
 
-    mkdir -p "$(dirname "$target_dir")"
+  mkdir -p "$(dirname "$dir")"
 
-    if [[ -d "$target_dir/.git" ]]; then
-        echo "🔁 Updating repo at $target_dir..."
-        git -C "$target_dir" fetch --tags origin
-        git -C "$target_dir" checkout "$ref" || {
-            echo "Fetching missing ref '$ref'..."
-            git -C "$target_dir" fetch origin "refs/tags/$ref:refs/tags/$ref"
-            git -C "$target_dir" checkout -f "$ref"
-        }
-    else
-        echo "🧱 Cloning $repo_url → $target_dir (ref: $ref)..."
-        git clone --depth 1 --branch "$ref" "$repo_url" "$target_dir" 2>/dev/null \
-            || git clone "$repo_url" "$target_dir"
-    fi
+  if [[ ! -d "$dir/.git" ]]; then
+    git clone "$repo" "$dir"
+  fi
 
-    git config --global --add safe.directory "$target_dir"
-    echo "✅ Repository ready at $target_dir (user: $(id -un))"
+  cd "$dir"
+
+  # Make workspace disposable
+  git fetch --all --tags
+  git reset --hard HEAD
+  git clean -fdx
+
+  if git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
+    git checkout -f --detach "$ref"
+  else
+    git checkout -B "$ref" "origin/$ref"
+    git reset --hard "origin/$ref"
+  fi
+
+  git clean -fdx
+  git config --global --add safe.directory "$dir"
+
+  echo "✅ Ready: $dir ($(id -un))"
 }
 
-# --- Safe wrapper: run as USER_TO_RUN if different from current user ---
+# -------------------------
+# Public entrypoint
+# -------------------------
 safe_git_checkout() {
-    set_user_to_run
-    local repo_url="$1"
-    local target_dir="$2"
-    local ref="${3:-main}"
+  local repo="$1"
+  local dir="$2"
+  local ref="${3:-main}"
 
-    run_git_ops() {
-        set -euo pipefail
+  local user
+  user="$(choose_user)"
 
-        if [[ ! -d "$target_dir/.git" ]]; then
-            echo "📥 Cloning $repo_url -> $target_dir"
-            git clone "$repo_url" "$target_dir"
-        fi
+  if [[ "$(id -un)" == "$user" ]]; then
+    git_force_checkout "$repo" "$dir" "$ref"
+    return
+  fi
 
-        echo "🔁 Forcing repo at $target_dir to origin/$ref"
-        cd "$target_dir"
+  [[ "$(id -un)" == "root" ]] || {
+    echo "❌ Must be root to switch user"
+    exit 1
+  }
 
-        git fetch --all --tags
-
-        if git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
-            # ref is a commit SHA or tag
-            git checkout --detach "$ref"
-        else
-            # ref is a branch
-            git checkout -B "$ref" "origin/$ref"
-            git reset --hard "origin/$ref"
-        fi
-
-        git clean -fdx
-
-        echo "✅ Repository ready at $target_dir (user: $(id -un))"
-    }
-
-    export repo_url target_dir ref
-    export -f run_git_ops
-
-    if [[ "$(id -un)" == "$USER_TO_RUN" ]]; then
-        run_git_ops
-        return
-    fi
-
-    if [[ "$(id -un)" != "root" ]]; then
-        echo "❌ Cannot switch to $USER_TO_RUN (not root)."
-        exit 1
-    fi
-
-    echo "Switching to $USER_TO_RUN for git operations..."
-    su "$USER_TO_RUN" -s /bin/bash -c "run_git_ops"
+  su "$user" -s /bin/bash -c \
+    "$(declare -f git_force_checkout); git_force_checkout '$repo' '$dir' '$ref'"
 }
