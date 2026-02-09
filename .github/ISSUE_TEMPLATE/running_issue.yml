@@ -1,0 +1,124 @@
+````yaml
+name: Running / Acceleration Issue
+description: Problems observed while the app is running (thumbnail generation, hardware acceleration, etc.)
+labels: ["running", "performance", "troubleshooting"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for runtime problems such as thumbnail generation failures, hardware-acceleration errors, or slow performance.
+
+  - type: dropdown
+    id: problem_area
+    attributes:
+      label: Problem Area
+      description: Which runtime area is affected?
+      options:
+        - Thumbnail generation
+        - Hardware acceleration / GPU
+        - Transcoding
+        - Performance (slow)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System & Version
+      description: Which OS and version are you running?
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 22.04 LTS
+        - Ubuntu 20.04 LTS
+        - Debian 13
+        - Debian 12
+        - Debian 11
+        - Other - Specify in the body
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hw_acceleration
+    attributes:
+      label: Hardware Acceleration
+      description: Is hardware acceleration enabled for this deployment?
+      options:
+        - "No"
+        - "Yes - Intel (Quick Sync / VAAPI)"
+        - "Yes - NVIDIA (CUDA / NVDEC)"
+        - "Yes - AMD (VCE / RDNA)"
+        - "Yes - Apple Silicon"
+        - "Yes - Other"
+    validations:
+      required: true
+
+  - type: input
+    id: hw_acceleration_details
+    attributes:
+      label: Hardware / Driver Details
+      description: GPU model and driver/runtime versions (if applicable)
+      placeholder: "e.g., RTX 3080, NVIDIA driver 535.104.05"
+
+  - type: input
+    id: ram
+    attributes:
+      label: Total RAM
+      description: How much RAM is available on the system?
+      placeholder: "e.g., 16 GB, 32 GB"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Helpful debug commands to collect for runtime/acceleration issues — paste outputs in the **Error Message / Logs** field below:
+
+        - Check VIPS version (thumbnail/image pipeline):
+          - `vips --version`
+
+        - Check Node `sharp` module versions (if applicable):
+          - `cd /home/immich/app`
+          - `node -p "require('sharp').versions"`
+
+        - Check GPU status/drivers (if using NVIDIA):
+          - `nvidia-smi`
+
+        - Check VAAPI/Intel drivers (if using VAAPI):
+          - `vainfo`
+
+        - Trace file-related system calls for the app start script (if suspecting file access issues):
+          - `strace -e trace=file -f /home/immich/app/start.sh`
+
+  - type: textarea
+    id: error_message
+    attributes:
+      label: Error Message / Logs
+      description: Paste any error messages, logs, or command outputs here (include command you ran)
+      placeholder: |
+        ```
+        Paste error output here
+        ```
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Describe exact steps to reproduce the issue (include sample image if relevant)
+      placeholder: |
+        1. Uploaded image X
+        2. Triggered thumbnail generation
+        3. Observed error Y
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Additional Information
+      description: Any other relevant details (configuration, environment variables, container vs host, etc.)
+      placeholder: "Any additional context, configurations, or observations"
+
+````

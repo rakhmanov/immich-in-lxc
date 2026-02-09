@@ -1,0 +1,118 @@
+name: Update Issue
+description: Report problems when updating from a previous version
+labels: ["update", "troubleshooting"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an update issue! Please provide the following information to help us troubleshoot.
+
+  - type: input
+    id: update_from_version
+    attributes:
+      label: Updating From Version
+      description: What version are you updating FROM?
+      placeholder: "e.g., 1.20.1"
+    validations:
+      required: true
+
+  - type: input
+    id: update_to_version
+    attributes:
+      label: Updating To Version
+      description: What version are you attempting to update TO?
+      placeholder: "e.g., 1.18.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System & Version
+      description: Which OS and version are you using?
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 22.04 LTS
+        - Ubuntu 20.04 LTS
+        - Debian 13
+        - Debian 12
+        - Debian 11
+        - Other - Specify in the body
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hw_acceleration
+    attributes:
+      label: Hardware Acceleration
+      description: Are you using hardware acceleration?
+      options:
+        - "No"
+        - "Yes - Intel (Quick Sync)"
+        - "Yes - NVIDIA (CUDA)"
+        - "Yes - AMD (VCE/RDNA)"
+        - "Yes - Apple Silicon"
+        - "Yes - Other"
+    validations:
+      required: true
+
+  - type: input
+    id: hw_acceleration_details
+    attributes:
+      label: Hardware Acceleration Details
+      description: If using hardware acceleration, provide GPU model and driver version
+      placeholder: "e.g., RTX 3080, NVIDIA driver 535.104.05"
+
+  - type: input
+    id: ram
+    attributes:
+      label: Total RAM
+      description: How much RAM is available on the system?
+      placeholder: "e.g., 16 GB, 32 GB"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Helpful debug commands to run before opening an issue — paste outputs in the **Error Message / Logs** field below:
+
+        - Trace file-related system calls for the app start script:
+          - `strace -e trace=file -f /home/immich/app/start.sh`
+
+        - Narrow down whether the `sharp` module is causing failures:
+          - `node -p "require('sharp').versions"`
+
+        - Check VIPS version:
+          - `vips --version`
+
+  - type: textarea
+    id: error_message
+    attributes:
+      label: Error Message
+      description: Paste any error messages or logs you received
+      placeholder: |
+        ```
+        Paste error output here
+        ```
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Describe the exact steps that led to the issue
+      placeholder: |
+        1. Ran update command
+        2. ...
+        3. Got error at step X
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Additional Information
+      description: Any other relevant details that might help (breaking changes noted, migration steps attempted, etc.)
+      placeholder: "Any additional context, configurations, or observations"
