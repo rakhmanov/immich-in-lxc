@@ -2,7 +2,7 @@
 
 # -------------------
 # Include helper functions
-# Such as git safe_git_checkout, set_user_to_run
+# Such as git safe_git_checkout, choose_user
 # -------------------
 source "./helpers.sh"
 
@@ -19,7 +19,7 @@ set_common_variables () {
     SOURCE_DIR=$SCRIPT_DIR/image-source
     LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
     LD_RUN_PATH=/usr/local/lib # :c$LD_RUN_PATH
-    set_user_to_run # Sets $USER_TO_RUN
+    choose_user # Sets $USER_TO_RUN
     set +a
 }
 
@@ -439,6 +439,9 @@ build_libvips () {
 # -------------------
 
 remove_build_dependency () {
+
+    apt-get purge -y libvips-dev
+
     apt-get remove -y \
         libbrotli-dev \
         libde265-dev \
@@ -448,8 +451,10 @@ remove_build_dependency () {
         liblcms2-2 \
         librsvg2-dev \
         libspng-dev \
-        libheif-dev \
-        libvips-dev
+        libheif-dev
+
+    apt-get autoremove -y
+
 
 # Manually finding what is safe to remove
 # and woun't be needed by install.sh which builds sharp from source
@@ -480,7 +485,9 @@ remove_build_dependency () {
 # -------------------
 
 add_runtime_dependency () {
-     apt-get install --no-install-recommends -yqq \
+    apt-get update
+
+    apt-get install --no-install-recommends -yqq \
         libde265-0 \
         libexif12 \
         libexpat1 \
@@ -503,6 +510,7 @@ add_runtime_dependency () {
         wget \
         zlib1g \
         ocl-icd-libopencl1
+
     apt-get install --no-install-recommends -y \
         libio-compress-brotli-perl \
         libwebp7 \
