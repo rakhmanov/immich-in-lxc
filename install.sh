@@ -277,10 +277,8 @@ install_immich_web_server_pnpm () {
     pnpm --filter @immich/sdk --filter immich-web --frozen-lockfile build
 
     # Build and deploy the server component.
-    # This part does not copy does not copy prebuilt sharp 
-    #   which is built against our system.
     pnpm --filter immich --prod deploy "$INSTALL_DIR_app"
-    # So we are rebuilding Sharp again that it links correctly
+    # Rebuild sharp again that it links correctly against global
     (cd $INSTALL_DIR_app; pnpm add sharp --allow-build=sharp; pnpm rebuild sharp)
 
     # Build and deploy the CLI.

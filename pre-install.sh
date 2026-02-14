@@ -63,36 +63,35 @@ install_build_dependency () {
         exit 1
     fi
 
-    # From immich/base-image
-    ## Install common tools
-    apt-get install --no-install-recommends -y\
-        curl git python3-venv python3-dev unzip
+    apt-get update
+
+    # Base utilities
+    apt-get install --no-install-recommends -y \
+        curl git python3-venv python3-dev unzip \
+        wget jq cpanminus
 
     ## Install common build components
-    apt-get install --no-install-recommends -y\
+    apt-get install --no-install-recommends -y \
         autoconf \
         build-essential \
+        g++ \
         cmake \
-        jq \
+        meson \
+        ninja-build \
+        pkg-config \
+        libtool \
+        zlib1g-dev \
         libbrotli-dev \
         libde265-dev \
         libexif-dev \
         libexpat1-dev \
         libglib2.0-dev \
         libgsf-1-dev \
-        liblcms2-2 \
         libspng-dev \
-        librsvg2-dev \
-        meson \
-        ninja-build \
-        pkg-config \
-        wget \
-        zlib1g \
-        cpanminus
+        librsvg2-dev
 
     # Install for imagick & sharp
-    apt-get install --no-install-recommends -y\
-        libtool \
+    apt-get install --no-install-recommends -y \
         libaom-dev \
         libx265-dev \
         libgif-dev \
@@ -106,8 +105,16 @@ install_build_dependency () {
         libopenexr-dev \
         libzip-dev \
         libssl-dev \
-        g++ \
         libimagequant-dev
+
+    # Added later – required for vips pkg-config resolution
+    apt-get install --no-install-recommends -y \
+        libcfitsio-dev \
+        libcairo2-dev \
+        libfontconfig1-dev \
+        libmatio-dev \
+        libopenjp2-7-dev \
+        libcgif-dev
 
 
     # Check the ID and execute the corresponding script
@@ -218,7 +225,7 @@ setup_folders () {
     if [ ! -d "$SOURCE_DIR" ]; then
         mkdir $SOURCE_DIR
     fi
-    sudo chown -R $USER_TO_RUN:$USER_TO_RUN $SOURCE_DIR
+    sudo chown -R $RUN_USER:$RUN_USER $SOURCE_DIR
 }
 
 
@@ -437,48 +444,66 @@ build_libvips () {
 # -------------------
 # Remove build dependency
 # -------------------
+# We cant remove build deps here as we are rebuilding sharp later.
+# Either sharp builds here and then moved to app folder, or we delete
+# after the install and then re-install when doing another upgrade.
+# For now, keep everything
+# Ideas is to build sharp to not use pre bundled vips and instead rely
+# on the manually build version where all the codecs are correctly linked.
+# In perfect universe we dont need anything from here to run Immich:
+# But the updates happen so frequently and sharp is rebuilt every time, 
+# This would be time consuming to redownload it every time. 
+
+# apt-get purge -y \
+#     build-essential \
+#     g++ \
+#     autoconf \
+#     cmake \
+#     meson \
+#     ninja-build \
+#     pkg-config \
+#     libtool \
+#     python3-dev \
+#     libbrotli-dev \
+#     libde265-dev \
+#     libexif-dev \
+#     libexpat1-dev \
+#     libglib2.0-dev \
+#     libgsf-1-dev \
+#     libspng-dev \
+#     librsvg2-dev \
+#     libaom-dev \
+#     libx265-dev \
+#     libgif-dev \
+#     libpango1.0-dev \
+#     libjpeg-dev \
+#     libpng-dev \
+#     libtiff-dev \
+#     liblcms2-dev \
+#     libxml2-dev \
+#     libfftw3-dev \
+#     libopenexr-dev \
+#     libzip-dev \
+#     libssl-dev \
+#     libimagequant-dev \
+#     libcfitsio-dev \
+#     libcairo2-dev \
+#     libfontconfig1-dev \
+#     libmatio-dev \
+#     libopenjp2-7-dev \
+#     libcgif-dev \
+#     libheif-dev \
+#     libdav1d-dev \
+#     libhwy-dev \
+#     libwebp-dev
+
+# apt-get clean
+# rm -rf /var/lib/apt/lists/*
 
 remove_build_dependency () {
-
     apt-get purge -y libvips-dev
-
-    apt-get remove -y \
-        libbrotli-dev \
-        libde265-dev \
-        libexif-dev \
-        libexpat1-dev \
-        libgsf-1-dev \
-        liblcms2-2 \
-        librsvg2-dev \
-        libspng-dev \
-        libheif-dev
-
     apt-get autoremove -y
-
-
-# Manually finding what is safe to remove
-# and woun't be needed by install.sh which builds sharp from source
-
-    #   apt-get remove -y \
-    #     libdav1d-dev \
-    #     libhwy-dev \
-    #     libwebp-dev \
-    #     libio-compress-brotli-perl
-    # apt-get remove -y \
-    #     libtool \
-    #     liblcms2-dev \
-    #     libgif-dev \
-    #     libpango1.0-dev \
-    #     libjpeg-dev \
-    #     libpng-dev \
-    #     libtiff-dev \
-    #     libxml2-dev \
-    #     libfftw3-dev \
-    #     libopenexr-dev \
-    #     libzip-dev \
-    #     libde265-dev 
 }
-
 
 # -------------------
 # Add runtime dependency

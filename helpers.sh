@@ -6,12 +6,18 @@ set -euo pipefail
 # -------------------------
 choose_user() {
   if [[ -n "${RUN_USER:-}" ]]; then
-    echo "$RUN_USER"
+    :
   elif id immich &>/dev/null; then
-    echo immich
+    RUN_USER="immich"
   else
-    id -un
+    RUN_USER="$(id -un)"
   fi
+
+  # Export RUN_USER for callers that expect this environment variable
+  export RUN_USER
+
+  # Print the chosen user for compatibility with callers that capture output
+  echo "$RUN_USER"
 }
 
 # -------------------------
