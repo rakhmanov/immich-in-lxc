@@ -304,10 +304,9 @@ install_immich_web_server_pnpm () {
             mise build
         )
 
-        # Trust
         # Copy results to app folder.
-        mkdir -p ./app/corePlugin
-        cp -a ./plugins/dist "$INSTALL_DIR_app/corePlugin"
+        mkdir -p "$INSTALL_DIR_app/corePlugin/dist"
+        cp -a ./plugins/dist/. "$INSTALL_DIR_app/corePlugin/dist/"
         cp -a ./plugins/manifest.json "$INSTALL_DIR_app/corePlugin/manifest.json"
     else
         echo "plugins directory not found — skipping plugin build."
@@ -330,7 +329,7 @@ generate_build_lock () {
 
     REPO_URL_BASE_IMG="https://github.com/immich-app/base-images"
 
-    tag=$(grep -oP '(?<=immich-app/base-server-dev:)[0-9]+' $INSTALL_DIR_app/Dockerfile)
+    tag=$(grep -oP '(?<=immich-app/base-server-dev:)[0-9]+' $INSTALL_DIR_src/server/Dockerfile)
 
     if [ -d base-images/.git ]; then
         echo "Updating existing base-images repo..."
@@ -360,55 +359,43 @@ generate_build_lock () {
 
 install_immich_machine_learning () {
     cd $INSTALL_DIR_src/machine-learning
+
+    # Install uv for the current user if not already present
+    if ! command -v uv &> /dev/null; then
+        echo "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        . "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+    fi
+
+    # Create the venv that the runtime start.sh expects to activate
     python3 -m venv $INSTALL_DIR_ml/venv
+
     (
-    # Initiate subshell to setup venv
-    . $INSTALL_DIR_ml/venv/bin/activate
+    # Point uv at the existing venv instead of creating a project-local .venv
+    export VIRTUAL_ENV=$INSTALL_DIR_ml/venv
 
-    # Use pypi if proxy does not present
-    if [ -z "${PROXY_POETRY}" ]; then
-        PROXY_POETRY=https://pypi.org/simple/  
-    fi
-    pip3 install poetry -i $PROXY_POETRY
-
-    # Set PROXY_POETRY as the primary source to download package from
-    # https://python-poetry.org/docs/repositories/#primary-package-sources
+    # Honour PROXY_POETRY as the package index (name kept for .env back-compat)
     if [ ! -z "${PROXY_POETRY}" ]; then
-        # langsam literally means slow
-        poetry source add --priority=primary langsam $PROXY_POETRY
+        export UV_INDEX_URL=$PROXY_POETRY
     fi
 
-    # Deal with python 3.12
-    python3_version=$(python3 --version 2>&1 | awk -F' ' '{print $2}' | awk -F'.' '{print $2}')
-    if [ $python3_version = 12 ]; then
-        # Allow Python 3.12 (e.g., Ubuntu 24.04)
-        sed -i -e 's/<3.12/<4/g' pyproject.toml
-        poetry update
-    fi
-    
-    # Install CUDA parts only when necessary
-    if [ $isCUDA = true ]; then
-        poetry install --no-root --extras cuda
-    elif [ $isCUDA = "openvino" ]; then
-        poetry install --no-root --extras openvino
-    elif [ $isCUDA = "rocm" ]; then
+    # Pick the extra matching the target accelerator
+    case "$isCUDA" in
+        true)     extra=cuda ;;
+        openvino) extra=openvino ;;
+        rocm)     extra=cpu ;;  # rocm onnxruntime comes from AMD's repo below
+        *)        extra=cpu ;;
+    esac
+
+    uv sync --frozen --extra "$extra" --no-dev --no-editable --no-install-project --compile-bytecode --active
+
+    if [ "$isCUDA" = "rocm" ]; then
         # https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-onnx.html
-        pip3 install onnxruntime-rocm -f https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.1/
-        # Verify installation
-        python3 -c "import onnxruntime as ort; print(ort.get_available_providers())"
-        # ROCm needs numpy < 2 [workaround](https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-onnx.html)
-        pip install "numpy<2" -i $PROXY_POETRY
-    else
-        poetry install --no-root --extras cpu
+        uv pip install onnxruntime-rocm --find-links https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.1/
+        # ROCm needs numpy < 2
+        uv pip install "numpy<2"
+        "$VIRTUAL_ENV/bin/python3" -c "import onnxruntime as ort; print(ort.get_available_providers())"
     fi
-
-    # Reset the settings
-    if [ ! -z "${PROXY_POETRY}" ]; then
-        # Remove the source
-        # https://python-poetry.org/docs/cli/#source-remove
-        poetry source remove langsam
-    fi
-
     )
 
     # Copy results

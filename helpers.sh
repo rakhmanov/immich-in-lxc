@@ -27,6 +27,7 @@ git_force_checkout() {
   local repo="$1"
   local dir="$2"
   local ref="${3:-main}"
+  local with_submodules="${4:-false}"
 
   mkdir -p "$(dirname "$dir")"
 
@@ -51,6 +52,11 @@ git_force_checkout() {
   git clean -fdx
   git config --global --add safe.directory "$dir"
 
+  if [[ "$with_submodules" == "true" ]]; then
+    git submodule sync --recursive
+    git submodule update --init --recursive --depth 1 --recommend-shallow --force
+  fi
+
   echo "✅ Ready: $dir ($(id -un))"
 }
 
@@ -61,12 +67,13 @@ safe_git_checkout() {
   local repo="$1"
   local dir="$2"
   local ref="${3:-main}"
+  local with_submodules="${4:-false}"
 
   local user
   user="$(choose_user)"
 
   if [[ "$(id -un)" == "$user" ]]; then
-    git_force_checkout "$repo" "$dir" "$ref"
+    git_force_checkout "$repo" "$dir" "$ref" "$with_submodules"
     return
   fi
 
@@ -76,5 +83,5 @@ safe_git_checkout() {
   }
 
   su "$user" -s /bin/bash -c \
-    "$(declare -f git_force_checkout); git_force_checkout '$repo' '$dir' '$ref'"
+    "$(declare -f git_force_checkout); git_force_checkout '$repo' '$dir' '$ref' '$with_submodules'"
 }

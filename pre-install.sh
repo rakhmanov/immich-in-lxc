@@ -19,6 +19,9 @@ set_common_variables () {
     SOURCE_DIR=$SCRIPT_DIR/image-source
     LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
     LD_RUN_PATH=/usr/local/lib # :c$LD_RUN_PATH
+    MIMALLOC_REPO_URL="https://github.com/microsoft/mimalloc.git"
+    MIMALLOC_TAG="${MIMALLOC_TAG:-v3.3.0}"
+    VCHORD_VERSION="${VCHORD_VERSION:-0.5.3}"
     choose_user # Sets $USER_TO_RUN
     set +a
 }
@@ -114,8 +117,11 @@ install_build_dependency () {
         libfontconfig1-dev \
         libmatio-dev \
         libopenjp2-7-dev \
-        libcgif-dev
+        libcgif-dev \
+        libpoppler-glib8 \
+        libopenslide0
 
+    ldconfig
 
     # Check the ID and execute the corresponding script
     case "$ID" in
@@ -191,9 +197,9 @@ install_postgresql () {
 
     # VectorCord
     # [*VectorChord Installation Documentation*](https://docs.vectorchord.ai/vectorchord/getting-started/installation.html#debian-packages)
-    PG_VC_FILE_NAME=postgresql-17-vchord_0.4.3-1_$(dpkg --print-architecture).deb
+    PG_VC_FILE_NAME=postgresql-17-vchord_${VCHORD_VERSION}-1_$(dpkg --print-architecture).deb
     if [ ! -f "$PG_VC_FILE_NAME" ]; then
-        wget -P /root/ https://github.com/tensorchord/VectorChord/releases/download/0.4.3/$PG_VC_FILE_NAME
+        wget -P /root/ https://github.com/tensorchord/VectorChord/releases/download/${VCHORD_VERSION}/$PG_VC_FILE_NAME
     fi
     apt install -y /root/$PG_VC_FILE_NAME
 
@@ -203,6 +209,41 @@ install_postgresql () {
     # Wait for restart
     sleep 5
     runuser -u postgres -- psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE'
+}
+
+build_mimalloc () {
+    cd "$SCRIPT_DIR"
+
+    SOURCE="$SOURCE_DIR/mimalloc"
+
+    safe_git_checkout "$MIMALLOC_REPO_URL" "$SOURCE" "$MIMALLOC_TAG"
+
+    rm -rf "$SOURCE/build"
+    mkdir -p "$SOURCE/build"
+    cd "$SOURCE/build"
+
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DMI_BUILD_SHARED=ON \
+        -DMI_BUILD_STATIC=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu
+
+    echo "Building mimalloc using $(nproc) threads"
+    cmake --build . -- -j"$(nproc)"
+    cmake --install .
+
+    ldconfig
+
+    if [ ! -e /usr/lib/x86_64-linux-gnu/libmimalloc.so.3 ]; then
+        echo "ERROR: libmimalloc.so.3 was not installed correctly"
+        exit 1
+    fi
+
+    if ! readelf -d /usr/lib/x86_64-linux-gnu/libmimalloc.so.3 | grep -q 'SONAME.*libmimalloc.so.3'; then
+        echo "ERROR: installed mimalloc SONAME is not libmimalloc.so.3"
+        exit 1
+    fi
 }
 
 # -------------------
@@ -244,27 +285,31 @@ change_locale () {
 # -------------------
 
 build_libjxl () {
+    (
+    set -e
     cd $SCRIPT_DIR
 
     SOURCE=$SOURCE_DIR/libjxl
-
-    set -e
 
     # This is set based on distro, or which libjpeg-dev is available (ABI 62 or 80)
     echo $JPEGLI_LIBJPEG_LIBRARY_SOVERSION
     echo $JPEGLI_LIBJPEG_LIBRARY_VERSION
 
     : "${LIBJXL_REVISION:=$(jq -cr '.revision' $BASE_IMG_REPO_DIR/server/sources/libjxl.json)}"
-    set +e
 
-    safe_git_checkout https://github.com/libjxl/libjxl.git $SOURCE $LIBJXL_REVISION
+    safe_git_checkout https://github.com/libjxl/libjxl.git $SOURCE $LIBJXL_REVISION true
 
     cd $SOURCE
 
-    git submodule update --init --recursive --depth 1 --recommend-shallow
-
-    git apply $BASE_IMG_REPO_DIR/server/sources/libjxl-patches/jpegli-empty-dht-marker.patch
-    git apply $BASE_IMG_REPO_DIR/server/sources/libjxl-patches/jpegli-icc-warning.patch
+    # Apply patches idempotently: skip if already applied
+    for patch in $BASE_IMG_REPO_DIR/server/sources/libjxl-patches/jpegli-empty-dht-marker.patch \
+                 $BASE_IMG_REPO_DIR/server/sources/libjxl-patches/jpegli-icc-warning.patch; do
+        if git apply --check "$patch" 2>/dev/null; then
+            git apply "$patch"
+        else
+            echo "Patch already applied or not applicable: $patch"
+        fi
+    done
 
     remove_build_folder $SOURCE
     
@@ -301,6 +346,7 @@ build_libjxl () {
     make clean
     remove_build_folder $SOURCE
     rm -rf $SOURCE/third_party/
+    )
 }
 
 
@@ -501,7 +547,7 @@ build_libvips () {
 # rm -rf /var/lib/apt/lists/*
 
 remove_build_dependency () {
-    apt-get purge -y libvips-dev
+    apt-get purge -y libvips-dev libmimalloc2.0 libmimalloc-dev
     apt-get autoremove -y
 }
 
@@ -523,7 +569,6 @@ add_runtime_dependency () {
         liblcms2-2 \
         liblqr-1-0 \
         libltdl7 \
-        libmimalloc2.0 \
         libopenexr-3-1-30 \
         libopenjp2-7 \
         librsvg2-2 \
@@ -558,6 +603,7 @@ change_locale
 build_libjxl
 build_libheif
 build_libraw
+build_mimalloc
 build_image_magick
 build_libvips
 remove_build_dependency
