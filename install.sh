@@ -391,9 +391,9 @@ install_immich_machine_learning () {
 
     if [ "$isCUDA" = "rocm" ]; then
         # https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-onnx.html
-        uv pip install onnxruntime-rocm --find-links https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.1/
+        uv pip install onnxruntime-rocm --find-links https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.4/
         # ROCm needs numpy < 2
-        uv pip install "numpy<2"
+        uv pip install "numpy<2.3.4"
         "$VIRTUAL_ENV/bin/python3" -c "import onnxruntime as ort; print(ort.get_available_providers())"
     fi
     )
