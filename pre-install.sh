@@ -8,6 +8,18 @@ source "./helpers.sh"
 
 
 # -------------------
+# Must run as root
+# -------------------
+check_root () {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Error: pre-install.sh must be run as root."
+        echo "Try: sudo ./pre-install.sh"
+        exit 1
+    fi
+}
+
+
+# -------------------
 # Common variables
 # -------------------
 set_common_variables () {
@@ -15,15 +27,127 @@ set_common_variables () {
     SCRIPT_DIR=$PWD
     REPO_URL="https://github.com/immich-app/base-images"
     APP_REPO_URL="https://github.com/immich-app/immich"
-    BASE_IMG_REPO_DIR=$SCRIPT_DIR/base-images
-    SOURCE_DIR=$SCRIPT_DIR/image-source
+    THIS_REPO_URL="${THIS_REPO_URL:-https://github.com/Rakhmanov/immich-in-lxc.git}"
+
+    # The Linux account that will own /home/$RUN_USER and run the immich
+    # services. Build trees live under that user's home so pre-install.sh
+    # can drop privileges for git ops without having to traverse a
+    # root-owned working directory.
+    #
+    # Resolution order:
+    #   1. $RUN_USER  — explicit override,
+    #   2. $USER      — convenience, so someone running `sudo -E USER=foo ./pre-install.sh`
+    #                   or an already-logged-in non-root user gets picked up; ignored
+    #                   if it resolves to root/empty because that would be nonsensical,
+    #   3. "immich"   — default.
+    if [ -z "${RUN_USER:-}" ]; then
+        if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
+            RUN_USER="$USER"
+        else
+            RUN_USER="immich"
+        fi
+    fi
+    RUN_USER_HOME="/home/$RUN_USER"
+    RUN_USER_REPO_DIR="$RUN_USER_HOME/immich-in-lxc"
+    RUN_USER_BUILD_DIR="$RUN_USER_HOME/build"
+    BASE_IMG_REPO_DIR="$RUN_USER_BUILD_DIR/base-images"
+    SOURCE_DIR="$RUN_USER_BUILD_DIR/image-source"
+
     LD_LIBRARY_PATH=/usr/local/lib # :$LD_LIBRARY_PATH
     LD_RUN_PATH=/usr/local/lib # :c$LD_RUN_PATH
     MIMALLOC_REPO_URL="https://github.com/microsoft/mimalloc.git"
     MIMALLOC_TAG="${MIMALLOC_TAG:-v3.3.0}"
     VCHORD_VERSION="${VCHORD_VERSION:-0.5.3}"
-    choose_user # Sets $USER_TO_RUN
     set +a
+}
+
+
+# -------------------
+# Shell-safe helpers
+# -------------------
+shell_single_quote () {
+    printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
+replace_key_value_line () {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    local tmp
+
+    tmp=$(mktemp)
+    awk -v key="$key" -v value="$value" '
+        BEGIN { replaced = 0 }
+        $0 ~ ("^" key "=") {
+            print key "=" value
+            replaced = 1
+            next
+        }
+        { print }
+        END {
+            if (!replaced) {
+                print key "=" value
+            }
+        }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+}
+
+
+# -------------------
+# Create immich user with password
+# -------------------
+# Idempotent:
+#   - skips creation if user already exists,
+#   - skips the password prompt if a usable password is already set, unless
+#     $USER_PASSWORD is provided (which always wins and rewrites it),
+#     or $FORCE_USER_PASSWORD=1 is set to force a re-prompt.
+# `passwd -S <user>` reports the second field as the account state:
+#   P  = password set,  L = locked,  NP = no password.
+create_immich_user () {
+    if id "$RUN_USER" &>/dev/null; then
+        echo "User '$RUN_USER' already exists. Skipping creation."
+    else
+        echo "Creating user '$RUN_USER' with home $RUN_USER_HOME..."
+        adduser --shell /bin/bash --disabled-password --gecos "Immich Mich" "$RUN_USER"
+    fi
+
+    # Suppress xtrace so passwords never end up in the trace output.
+    { set +x; } 2>/dev/null
+
+    local pw_state
+    pw_state=$(passwd -S "$RUN_USER" 2>/dev/null | awk '{print $2}')
+
+    if [ -n "${USER_PASSWORD:-}" ]; then
+        # Explicit override always wins.
+        echo "$RUN_USER:$USER_PASSWORD" | chpasswd
+        echo "Password for '$RUN_USER' set from \$USER_PASSWORD."
+    elif [ "$pw_state" = "P" ] && [ "${FORCE_USER_PASSWORD:-0}" != "1" ]; then
+        echo "Password for '$RUN_USER' already set — keeping existing one."
+        echo "    (Set FORCE_USER_PASSWORD=1 or USER_PASSWORD=... to change it.)"
+    else
+        echo "Set a password for the '$RUN_USER' Linux user (used for su / ssh login):"
+        # passwd reads twice and exits non-zero on mismatch; let set -e catch it
+        passwd "$RUN_USER"
+    fi
+    set -x
+
+    # Groups needed for GPU passthrough (video, render). Safe to re-run.
+    usermod -aG video,render "$RUN_USER"
+}
+
+
+# -------------------
+# Prepare the build directory under $RUN_USER_HOME and arrange for
+# subsequent safe_git_checkout calls to drop privileges to $RUN_USER.
+# Call AFTER create_immich_user, BEFORE the first safe_git_checkout.
+# -------------------
+prepare_build_dir () {
+    install -d -o "$RUN_USER" -g "$RUN_USER" -m 0755 "$RUN_USER_BUILD_DIR"
+
+    # RUN_USER is already set; re-export it so choose_user picks it up when
+    # helpers.sh was sourced in a sub-shell that didn't see `set -a`.
+    export RUN_USER
 }
 
 
@@ -203,12 +327,170 @@ install_postgresql () {
     fi
     apt install -y /root/$PG_VC_FILE_NAME
 
+    # On hosts without systemd (WSL2, some containers), the postgresql-17
+    # package's post-install does not start the cluster. Make sure it is up
+    # before we try to talk to it.
+    service_start postgresql.service
+    sleep 2
+
     # Config PostgreSQL to use VectorCord
     runuser -u postgres -- psql -c 'ALTER SYSTEM SET shared_preload_libraries = "vchord"'
-    systemctl restart postgresql.service
+    service_restart postgresql.service
     # Wait for restart
     sleep 5
     runuser -u postgres -- psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE'
+}
+
+
+# -------------------
+# Create immich DB role + database
+# -------------------
+# Idempotent:
+#   - uses DO blocks / IF NOT EXISTS for the role and database objects,
+#   - skips the password prompt (and the ALTER ROLE) if the 'immich' role
+#     already exists, unless $DB_PASSWORD is provided (which always
+#     wins), or $FORCE_DB_PASSWORD=1 is set to force a re-prompt.
+setup_immich_database () {
+    # Suppress xtrace so the DB password never lands in trace output.
+    { set +x; } 2>/dev/null
+
+    local role_exists="f"
+    if runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='immich'" 2>/dev/null | grep -q 1; then
+        role_exists="t"
+    fi
+
+    local set_password="t"
+    if [ -n "${DB_PASSWORD:-}" ]; then
+        :   # explicit override always wins — fall through and set it
+    elif [ "$role_exists" = "t" ] && [ "${FORCE_DB_PASSWORD:-0}" != "1" ]; then
+        echo "Role 'immich' already exists — keeping existing DB password."
+        echo "    (Set FORCE_DB_PASSWORD=1 or DB_PASSWORD=... to change it.)"
+        set_password="f"
+    else
+        echo "Set a password for the PostgreSQL 'immich' role (used by the app to connect):"
+        local p1 p2
+        while :; do
+            read -rs -p "DB password: " p1; echo
+            read -rs -p "Confirm    : " p2; echo
+            [ "$p1" = "$p2" ] && [ -n "$p1" ] && { DB_PASSWORD="$p1"; break; }
+            echo "Passwords empty or do not match, try again."
+        done
+        export DB_PASSWORD
+    fi
+
+    if [ "$set_password" = "t" ]; then
+        # Escape single quotes for the SQL literal.
+        local esc_pw="${DB_PASSWORD//\'/\'\'}"
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'immich') THEN
+        CREATE ROLE immich WITH LOGIN SUPERUSER PASSWORD '${esc_pw}';
+    ELSE
+        ALTER ROLE immich WITH LOGIN SUPERUSER PASSWORD '${esc_pw}';
+    END IF;
+END
+\$\$;
+SQL
+    fi
+
+    if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='immich'" | grep -q 1; then
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE immich OWNER immich"
+    fi
+    runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE immich TO immich"
+    set -x
+}
+
+
+# -------------------
+# Clone this repo into immich's home and seed .env
+# -------------------
+# After pre-install.sh finishes, the user logs in as 'immich' and runs
+# install.sh from $RUN_USER_REPO_DIR. We clone a fresh copy there owned by
+# immich so that user does not need to deal with permissions.
+setup_immich_repo () {
+    # Clone (or update) the repo into immich's home as the immich user so the
+    # working tree ends up with the right ownership.
+    su - "$RUN_USER" -c "
+        set -e
+        if [ -d '$RUN_USER_REPO_DIR/.git' ]; then
+            echo 'Repo already exists at $RUN_USER_REPO_DIR, pulling latest.'
+            cd '$RUN_USER_REPO_DIR' && git pull --ff-only
+        else
+            git clone '$THIS_REPO_URL' '$RUN_USER_REPO_DIR'
+        fi
+    "
+
+    # Seed .env from the in-repo template if one is not already present.
+    local env_src env_dst seeded_env="0"
+    env_dst="$RUN_USER_REPO_DIR/.env"
+    if [ -f "$RUN_USER_REPO_DIR/example.env" ]; then
+        env_src="$RUN_USER_REPO_DIR/example.env"
+    else
+        env_src=""
+    fi
+
+    if [ ! -f "$env_dst" ] && [ -n "$env_src" ]; then
+        cp "$env_src" "$env_dst"
+        chown "$RUN_USER:$RUN_USER" "$env_dst"
+        seeded_env="1"
+    fi
+
+    if [ "$seeded_env" = "1" ]; then
+        replace_key_value_line "$env_dst" "INSTALL_DIR" "$RUN_USER_HOME"
+        replace_key_value_line "$env_dst" "UPLOAD_DIR" "$RUN_USER_HOME/upload"
+        chown "$RUN_USER:$RUN_USER" "$env_dst"
+    fi
+
+    # Seed runtime.env password from what we set above, if the template is there.
+    local runtime_env="$RUN_USER_REPO_DIR/runtime.env"
+    if [ -f "$runtime_env" ]; then
+        replace_key_value_line "$runtime_env" "MACHINE_LEARNING_CACHE_FOLDER" "$RUN_USER_HOME/ml-models"
+
+        if [ -n "${DB_PASSWORD:-}" ]; then
+            { set +x; } 2>/dev/null
+            replace_key_value_line "$runtime_env" "DB_PASSWORD" "$(shell_single_quote "$DB_PASSWORD")"
+            set -x
+        fi
+        chown "$RUN_USER:$RUN_USER" "$runtime_env"
+    fi
+}
+
+
+# -------------------
+# Copy service files (for systemd compatibility)
+# -------------------
+
+copy_service_files () {
+    local escaped_home escaped_user
+
+    # Remove deprecated service
+    rm -f /etc/systemd/system/immich-microservices.service
+
+    escaped_home="${RUN_USER_HOME//\//\\/}"
+    escaped_user="${RUN_USER//&/\\&}"
+
+    sed \
+        -e "s/User=immich/User=$escaped_user/" \
+        -e "s/Group=immich/Group=$escaped_user/" \
+        -e "s|/home/immich|$escaped_home|g" \
+        "$RUN_USER_REPO_DIR/immich-ml.service" > /etc/systemd/system/immich-ml.service
+    sed \
+        -e "s/User=immich/User=$escaped_user/" \
+        -e "s/Group=immich/Group=$escaped_user/" \
+        -e "s|/home/immich|$escaped_home|g" \
+        "$RUN_USER_REPO_DIR/immich-web.service" > /etc/systemd/system/immich-web.service
+}
+
+
+# -------------------
+# Create log directory
+# -------------------
+
+create_log_directory () {
+    mkdir -p /var/log/immich
+    chown "$RUN_USER:$RUN_USER" /var/log/immich
+    chmod 755 /var/log/immich
 }
 
 build_mimalloc () {
@@ -247,16 +529,6 @@ build_mimalloc () {
 }
 
 # -------------------
-# Change lock file permission
-# -------------------
-
-change_permission () {
-    # Change file permission so that install script could copy the content
-    chmod 666 $BASE_IMG_REPO_DIR/server/sources/*.json
-}
-
-
-# -------------------
 # Setup folders
 # -------------------
 
@@ -266,7 +538,7 @@ setup_folders () {
     if [ ! -d "$SOURCE_DIR" ]; then
         mkdir $SOURCE_DIR
     fi
-    sudo chown -R $RUN_USER:$RUN_USER $SOURCE_DIR
+    chown -R $RUN_USER:$RUN_USER $SOURCE_DIR
 }
 
 
@@ -591,13 +863,16 @@ add_runtime_dependency () {
 
 set -xeuo pipefail # Make people's life easier
 
+check_root
 set_common_variables
+create_immich_user
+prepare_build_dir
 safe_git_checkout "$REPO_URL" "$BASE_IMG_REPO_DIR" main
 install_runtime_component
 install_build_dependency
 install_ffmpeg
 install_postgresql
-change_permission
+setup_immich_database
 setup_folders
 change_locale
 build_libjxl
@@ -608,3 +883,18 @@ build_image_magick
 build_libvips
 remove_build_dependency
 add_runtime_dependency
+setup_immich_repo
+copy_service_files
+create_log_directory
+
+set +x
+echo
+echo "===================================================================="
+echo "pre-install complete."
+echo
+echo "Log in as the service user to continue:"
+echo "    su - $RUN_USER"
+echo "    cd $RUN_USER_REPO_DIR"
+echo "    cp example.env .env   # if not already copied, then edit it"
+echo "    ./install.sh"
+echo "===================================================================="

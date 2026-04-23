@@ -91,6 +91,10 @@ set_common_variables () {
     TMP_DIR=/tmp/$(whoami)/immich-in-lxc/
     REPO_URL="https://github.com/immich-app/immich"
     NODE_OPTIONS="--max-old-space-size=8192"
+    # Shared with pre-install.sh so we don't clone base-images twice.
+    # $HOME here is the run-user's home (install.sh runs as $RUN_USER).
+    RUN_USER_BUILD_DIR="$HOME/build"
+    BASE_IMG_REPO_DIR="$RUN_USER_BUILD_DIR/base-images"
     set +a
 }
 
@@ -331,16 +335,21 @@ generate_build_lock () {
 
     tag=$(grep -oP '(?<=immich-app/base-server-dev:)[0-9]+' $INSTALL_DIR_src/server/Dockerfile)
 
-    if [ -d base-images/.git ]; then
-        echo "Updating existing base-images repo..."
-        git -C base-images fetch --tags
-        git -C base-images checkout "$tag" || git -C base-images fetch origin "refs/tags/$tag:refs/tags/$tag" && git -C base-images checkout "$tag"
+    # Reuse the tree pre-install.sh populated under $HOME/build/base-images.
+    # safe_git_checkout is idempotent — if the directory is missing (e.g.
+    # install.sh is being run without pre-install.sh), it will clone fresh.
+    mkdir -p "$(dirname "$BASE_IMG_REPO_DIR")"
+
+    if [ -d "$BASE_IMG_REPO_DIR/.git" ]; then
+        echo "Updating existing base-images repo at $BASE_IMG_REPO_DIR..."
+        git -C "$BASE_IMG_REPO_DIR" fetch --tags
+        git -C "$BASE_IMG_REPO_DIR" checkout "$tag" || git -C "$BASE_IMG_REPO_DIR" fetch origin "refs/tags/$tag:refs/tags/$tag" && git -C "$BASE_IMG_REPO_DIR" checkout "$tag"
     else
-        echo "Cloning fresh base-images repo at tag $tag..."
-        safe_git_checkout "$REPO_URL_BASE_IMG" . "$tag"
+        echo "Cloning fresh base-images repo at tag $tag into $BASE_IMG_REPO_DIR..."
+        safe_git_checkout "$REPO_URL_BASE_IMG" "$BASE_IMG_REPO_DIR" "$tag"
     fi
 
-    cd base-images/server/
+    cd "$BASE_IMG_REPO_DIR/server/"
 
     # From base-images/server/Dockerfile line 110
     jq -s '.' packages/*.json > $TMP_DIR/packages.json
@@ -517,6 +526,7 @@ create_runtime_env_file () {
         # If not, create a new one based on the template
         if [ -f $SCRIPT_DIR/runtime.env ]; then
             cp $SCRIPT_DIR/runtime.env runtime.env
+            sed -i "s|^MACHINE_LEARNING_CACHE_FOLDER=.*|MACHINE_LEARNING_CACHE_FOLDER=$INSTALL_DIR/ml-models|" runtime.env
             echo "New runtime.env file created from the template, exiting"
         else
             echo "runtime.env not found, please clone the entire repo, exiting"
@@ -579,8 +589,8 @@ create_runtime_env_file
 echo "----------------------------------------------------------------"
 echo "Installation/Upgrade Completed"
 echo "----------------------------------------------------------------"
-echo "If this was first intallation - run post-install.sh."
-echo "./post-install.sh"
-echo "----------------------------------------------------------------"
-echo "If this was an update, restart the services (as root):"
-echo "systemctl restart immich-web immich-ml"
+echo "If this was a first installation, review $INSTALL_DIR/runtime.env if needed."
+echo "Then start the services (as root):"
+echo "systemctl daemon-reload"
+echo "systemctl start immich-ml immich-web"
+echo "systemctl enable immich-ml immich-web"
