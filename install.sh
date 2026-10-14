@@ -320,7 +320,10 @@ build_sharp_from_source () {
     local addon
     addon=$(ls "$sharp_dir"/src/build/Release/sharp-linux-*.node | head -n 1)
     ldd "$addon" | grep -q '/usr/local/lib/libvips-cpp.so'
-    (cd "$INSTALL_DIR_app" && node -e "const s=require('sharp'); console.log('sharp ok', JSON.stringify(s.versions))")
+    # Runtime check: encodes through every codec and asserts (via /proc/self/maps)
+    # that libvips/libheif/libjxl/libraw were loaded from /usr/local/lib and that
+    # no bundled prebuilt libvips was mapped.
+    IMMICH_APP_DIR="$INSTALL_DIR_app" node "$SCRIPT_DIR/tests/verify-native-media.js"
 }
 
 # -------------------

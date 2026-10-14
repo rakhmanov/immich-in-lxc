@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const appDir = process.env.IMMICH_APP_DIR;
 if (!appDir) {
   throw new Error('IMMICH_APP_DIR must point to the deployed Immich application');
@@ -27,6 +28,28 @@ async function main() {
 
   console.log(JSON.stringify({ versions: sharp.versions, simd: sharp.simd() }));
   await Promise.all(['jpeg', 'avif', 'jxl'].map(encode));
+  assertLinkedToSystemLibs();
+}
+
+// After the encodes above every codec library is mapped into this process, so
+// /proc/self/maps shows what actually got loaded (ldd only shows what the
+// addon asks for). Sharp's prebuilt @img/sharp-libvips-* bundle reports the same
+// version string as a matching system libvips, so versions alone cannot tell
+// them apart.
+function assertLinkedToSystemLibs() {
+  const maps = fs.readFileSync('/proc/self/maps', 'utf8');
+  const mapped = (re) => [...new Set(maps.split('\n').map((l) => l.split(/\s+/)[5]).filter((p) => p && re.test(p)))];
+
+  const bundled = mapped(/sharp-libvips|\/@img\//);
+  assert.deepEqual(bundled, [], `Sharp loaded its bundled prebuilt libvips: ${bundled}`);
+
+  for (const lib of ['libvips-cpp', 'libheif', 'libjxl', 'libraw_r']) {
+    const paths = mapped(new RegExp(`/${lib}\\.so`));
+    assert.ok(paths.length > 0, `${lib} is not loaded in the Sharp process`);
+    const outside = paths.filter((p) => !p.startsWith('/usr/local/lib/'));
+    assert.deepEqual(outside, [], `${lib} loaded from outside /usr/local/lib: ${outside}`);
+  }
+  console.log('linkage=system /usr/local/lib');
 }
 
 main().catch((error) => {
