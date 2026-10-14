@@ -172,11 +172,18 @@ git_force_checkout() {
   git reset --hard HEAD
   git clean -fdx
 
-  if git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
+  # Prefer the remote branch over any local branch of the same name. A local
+  # "main" created by the first clone never advances on `git fetch`, so
+  # resolving "main" locally silently pins the checkout to the first-install
+  # snapshot forever (stale base-images pins -> stale libheif/libvips/...).
+  if git show-ref --verify --quiet "refs/remotes/origin/$ref"; then
+    git checkout -f -B "$ref" "origin/$ref"
+    git reset --hard "origin/$ref"
+  elif git rev-parse --verify "$ref^{commit}" >/dev/null 2>&1; then
     git checkout -f --detach "$ref"
   else
-    git checkout -B "$ref" "origin/$ref"
-    git reset --hard "origin/$ref"
+    echo "❌ Cannot resolve ref '$ref' in $dir"
+    return 1
   fi
 
   git clean -fdx

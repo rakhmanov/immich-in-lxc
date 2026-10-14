@@ -101,7 +101,7 @@ test -n "$dng_coder"
 ldd "$dng_coder" | grep -q '/usr/local/lib/libraw_r.so'
 
 sharp_addon=$(find "$RUN_USER_HOME/app/node_modules" \
-    -path '*sharp*/src/build/Release/sharp-linux-x64.node' -print -quit)
+    -path '*sharp*/src/build/Release/sharp-linux-x64*.node' -print -quit)
 test -n "$sharp_addon"
 ldd "$sharp_addon" | grep -q '/usr/local/lib/libvips-cpp.so'
 ldd "$sharp_addon" | grep -q '/usr/local/lib/libraw_r.so'

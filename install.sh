@@ -265,6 +265,65 @@ EOF
 }
 
 # -------------------
+# Build Sharp against the system libvips
+# -------------------
+# Sharp <= 0.34 compiled itself against the global libvips during
+# `pnpm install`. Sharp >= 0.35 (Immich >= v3.2.0) instead installs prebuilt
+# @img/sharp-* packages that bundle their own libvips; loading that alongside the
+# system-built libjxl/libheif/libraw segfaults at startup (SIGSEGV on
+# require('sharp')). Compile the addon from source against /usr/local instead:
+# a locally built addon takes precedence over the prebuilt packages.
+build_sharp_from_source () {
+    local pnpm_dir="$INSTALL_DIR_app/node_modules/.pnpm"
+    local sharp_dir
+    sharp_dir=$(ls -d "$pnpm_dir"/sharp@*/node_modules/sharp 2>/dev/null | head -n 1 || true)
+    if [ -z "$sharp_dir" ]; then
+        echo "sharp not found under $pnpm_dir, skipping source build"
+        return 0
+    fi
+
+    if compgen -G "$sharp_dir/src/build/Release/sharp-linux-*.node" >/dev/null; then
+        echo "sharp already built from source ($(node -p "require('$sharp_dir/package.json').version")), skipping"
+        return 0
+    fi
+
+    echo "Building sharp $(node -p "require('$sharp_dir/package.json').version") from source against global libvips"
+
+    # Build tooling is not a runtime dependency of the deployed app; use the copies
+    # pnpm already placed in the store, and fall back to npm if they are absent.
+    local addon_api gyp tools_dir=""
+    addon_api=$(ls -d "$pnpm_dir"/node-addon-api@*/node_modules 2>/dev/null | tail -n 1 || true)
+    gyp=$(ls -d "$pnpm_dir"/node-gyp@*/node_modules 2>/dev/null | tail -n 1 || true)
+    if [ -z "$addon_api" ] || [ -z "$gyp" ]; then
+        tools_dir=$(mktemp -d)
+        npm install --no-save --no-audit --no-fund --prefix "$tools_dir" node-addon-api node-gyp
+        addon_api="$tools_dir/node_modules"
+        gyp="$tools_dir/node_modules"
+    fi
+
+    local shim_dir
+    shim_dir=$(mktemp -d)
+    printf '#!/bin/sh\nexec node "%s/node-gyp/bin/node-gyp.js" "$@"\n' "$gyp" > "$shim_dir/node-gyp"
+    chmod +x "$shim_dir/node-gyp"
+
+    (
+        cd "$sharp_dir"
+        export PATH="$shim_dir:$PATH"
+        export NODE_PATH="$addon_api:$gyp"
+        export SHARP_FORCE_GLOBAL_LIBVIPS=1
+        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+        node install/build.js
+    )
+    rm -rf "$shim_dir" ${tools_dir:+"$tools_dir"}
+
+    # Fail the install now, rather than crash-looping the service later.
+    local addon
+    addon=$(ls "$sharp_dir"/src/build/Release/sharp-linux-*.node | head -n 1)
+    ldd "$addon" | grep -q '/usr/local/lib/libvips-cpp.so'
+    (cd "$INSTALL_DIR_app" && node -e "const s=require('sharp'); console.log('sharp ok', JSON.stringify(s.versions))")
+}
+
+# -------------------
 # Install immich-web-server
 # -------------------
 
@@ -293,9 +352,11 @@ install_immich_web_server_pnpm () {
 
     # Build and deploy the server component.
     corepack pnpm --filter immich --prod deploy "$INSTALL_DIR_app"
-    # sharp was compiled against the global libvips during the frozen workspace
-    # install. Do not mutate the deployed v3 lockfile: its injected workspace
-    # dependency snapshots are not valid standalone `pnpm add` resolver input.
+    # Sharp <= 0.34 was compiled against the global libvips during the frozen
+    # workspace install; Sharp >= 0.35 needs the explicit build below. Do not
+    # mutate the deployed v3 lockfile: its injected workspace dependency
+    # snapshots are not valid standalone `pnpm add` resolver input.
+    build_sharp_from_source
 
     # Build and deploy the CLI.
     corepack pnpm --filter @immich/sdk --filter @immich/cli build

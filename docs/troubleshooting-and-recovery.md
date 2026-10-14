@@ -99,6 +99,22 @@ DB_VECTOR_EXTENSION=vectorchord
 
 Back up PostgreSQL before making the change. Very old Immich versions may need an intermediate upgrade supported by Immich rather than a direct jump to the current tag; consult the release notes for every skipped breaking release.
 
+## `immich-web` crash-loops with SIGSEGV after upgrading to v3.2.0 or newer
+
+Symptom: after an upgrade the build finishes, but `immich-web` exits immediately with `code=killed, status=11/SEGV` and `systemctl` shows a growing restart counter. `node -e "require('sharp')"` as the `immich` user prints `Segmentation fault`.
+
+Cause (two independent defects, both fixed in the installer):
+
+1. **Sharp 0.35 (Immich v3.2.0+).** Immich v3.0.x and v3.1.x ship Sharp 0.34, which compiled itself against the system libvips during `pnpm install`. Immich v3.2.0 moved to Sharp 0.35, which installs prebuilt `@img/sharp-*` packages bundling their own libvips; that copy conflicts with the system-built libjxl/libheif/libraw and crashes on load. `install.sh` now runs `build_sharp_from_source`, which compiles the addon against `/usr/local` (a locally built addon takes precedence) and fails the install if the result is not linked to the system libvips.
+2. **Stale base-images pins.** `pre-install.sh` used to check out `immich-app/base-images` at `main` through a local branch that never advanced after the first clone, so libheif, libvips, libjxl, libraw and ImageMagick stayed at the versions of the original install. Sharp 0.35.5 needs libvips >= 8.18.7, and a stale libheif rejects AVIF encoding with `heif: Invalid parameter value (5.2006)`. `pre-install.sh` now reads `base-server-dev:<tag>` from the Dockerfile of `REPO_TAG` and builds from that exact base-images tag (override with `BASE_IMAGES_REF`).
+
+Recovery on an affected install: `git pull` this repository, set `REPO_TAG` in `.env`, run `./pre-install.sh` as root, then `install.sh` as `immich`. Verify with:
+
+```bash
+runuser -u immich -- bash -lc 'cd /home/immich/app && node -p "require(\"sharp\").versions"'
+IMMICH_APP_DIR=/home/immich/app node tests/verify-native-media.js
+```
+
 ## Restore boundary
 
 The database and `UPLOAD_DIR` together form the persistent Immich state. Restore matching database and media backups, verify file ownership, and let the installer rebuild `/home/immich/app`. Do not restore an old application directory over a newly installed version.
