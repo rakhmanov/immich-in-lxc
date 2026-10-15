@@ -77,7 +77,7 @@ nano .env
 Use this configuration for the layout above:
 
 ```dotenv
-REPO_TAG=v3.0.2
+REPO_TAG=v3.3.3
 INSTALL_DIR=/home/immich
 UPLOAD_DIR=/mnt/photos
 isCUDA=false

@@ -921,6 +921,44 @@ add_runtime_dependency () {
         libhwy1t64
 }
 
+# -------------------
+# Resolve which immich-app/base-images ref to build the media stack from
+# -------------------
+# Every Immich release declares the base-images tag its Docker image is built on
+# (server/Dockerfile: base-server-dev:<tag>). That tag pins libheif, libvips,
+# libjxl, libraw and ImageMagick. Building from a different (older/newer)
+# snapshot mixes library versions Sharp was not built against, which breaks
+# media handling (Sharp >= 0.35 needs libvips >= 8.18.7, and a stale libheif
+# rejects AVIF encode parameters).
+#
+# Order: BASE_IMAGES_REF override -> tag from the Dockerfile of REPO_TAG -> main.
+resolve_base_images_ref () {
+    if [ -n "${BASE_IMAGES_REF:-}" ]; then
+        echo "$BASE_IMAGES_REF"
+        return
+    fi
+
+    local repo_tag="${REPO_TAG:-}"
+    if [ -z "$repo_tag" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+        repo_tag=$(sed -n 's/^REPO_TAG=//p' "$SCRIPT_DIR/.env" | tail -n 1 | tr -d "\"' ")
+    fi
+
+    local tag=""
+    if [ -n "$repo_tag" ]; then
+        tag=$(curl -fsSL "https://raw.githubusercontent.com/immich-app/immich/${repo_tag}/server/Dockerfile" 2>/dev/null \
+            | grep -oP '(?<=immich-app/base-server-dev:)[0-9]+' | head -n 1 || true)
+    fi
+
+    if [ -n "$tag" ]; then
+        echo "base-images ref for Immich ${repo_tag}: ${tag}" >&2
+        echo "$tag"
+    else
+        echo "WARNING: could not resolve base-images tag for REPO_TAG='${repo_tag}', using main" >&2
+        echo main
+    fi
+}
+
+
 main() {
     set -xeuo pipefail # Make people's life easier
 
@@ -930,7 +968,7 @@ main() {
     install_bootstrap_dependencies
     create_immich_user
     prepare_build_dir
-    safe_git_checkout "$REPO_URL" "$BASE_IMG_REPO_DIR" main
+    safe_git_checkout "$REPO_URL" "$BASE_IMG_REPO_DIR" "$(resolve_base_images_ref)"
     install_runtime_component
     install_build_dependency
     install_ffmpeg
