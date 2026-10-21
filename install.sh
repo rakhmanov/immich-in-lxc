@@ -532,10 +532,11 @@ setup_upload_folder () {
 
 download_geonames () {
     cd $INSTALL_DIR_geo
-    if [ ! -f "cities500.zip" ] || [ ! -f "admin1CodesASCII.txt" ] || [ ! -f "admin2Codes.txt" ] || [ ! -f "ne_10m_admin_0_countries.geojson" ]; then
+    if [ ! -f "cities500.zip" ] || [ ! -f "admin1CodesASCII.txt" ] || [ ! -f "admin2Codes.txt" ] || [ ! -f "ne_10m_admin_0_countries.geojson" ] || [ ! -f "countryInfo.txt" ]; then
         echo "incomplete geodata, start downloading"
         wget -o - https://download.geonames.org/export/dump/admin1CodesASCII.txt &
         wget -o - https://download.geonames.org/export/dump/admin2Codes.txt &
+        wget -o - https://download.geonames.org/export/dump/countryInfo.txt &
         wget -o - https://download.geonames.org/export/dump/cities500.zip &
         wget -o - https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson &
         wait
