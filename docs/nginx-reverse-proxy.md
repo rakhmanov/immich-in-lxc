@@ -74,7 +74,7 @@ server {
     listen 80;
     server_name immich.example.com;
 
-    return 301 https://$host$request_uri;
+    return 308 https://$host$request_uri;
 }
 
 server {
@@ -86,6 +86,11 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 0;
+    client_body_buffer_size 1024k;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    send_timeout 600s;
+    client_body_timeout 600s;
 
     location / {
         proxy_pass http://127.0.0.1:2283;
@@ -102,6 +107,14 @@ server {
 }
 ```
 
+nginx's timeouts default to 60s and count the gap between two reads or writes, not the
+whole transfer. A large upload that keeps moving never hits them, but one that pauses
+(a phone on a weak network, or Immich still processing a big video before it replies) gets
+its connection dropped, and the mobile app reports `unexpected end of stream`. The settings
+above raise each gap to 10 minutes: `client_body_timeout` for the client sending the body,
+`proxy_send_timeout` for nginx passing it on to Immich, `proxy_read_timeout` for Immich's
+reply, and `send_timeout` for sending that reply back to the client.
+
 Enable and validate it:
 
 ```bash
@@ -114,3 +127,18 @@ systemctl reload nginx
 Open `https://immich.example.com` and verify login, upload, and a large video transfer. If another site already owns ports 80 or 443, integrate the `location` block into that proxy instead of starting a second listener.
 
 The certificate lifecycle is intentionally outside this installer. mkcert and self-signed certs above don't renew themselves — re-run the same command before they expire, or switch to certbot if that becomes a chore.
+
+## Troubleshooting: upload fails with "unexpected end of stream"
+
+If the mobile app's server endpoint is set to `http://` instead of `https://`, every request
+hits the port-80 listener first and gets 308-redirected to https. Small metadata calls survive
+that (tiny or empty body, trivially re-sent), but a large streaming upload doesn't — the app
+consumes the upload stream on the first attempt and has nothing left to send when it retries
+against the redirect target, killing the connection mid-transfer.
+
+Fix the endpoint in the app to `https://` if you can. If you can't (some app builds don't expose
+that setting, or it's pinned elsewhere), drop the redirect instead and serve the app directly on
+port 80 too, by copying everything after `ssl_protocols` in the `443` server (the
+`client_*`, timeout and `proxy_*` lines and the `location` block) into the `80` server in
+place of the `return 308 ...` line. This removes the forced-HTTPS
+default, so only do it on a trusted LAN where that trade-off is acceptable.
