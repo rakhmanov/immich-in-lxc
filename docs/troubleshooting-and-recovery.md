@@ -33,15 +33,20 @@ Do not paste `runtime.env` into a public issue: it contains the database passwor
 
 ## Web works but machine learning fails
 
-Native installs do not have Docker's internal service DNS. In the Immich UI, set:
+Native installs do not have Docker's internal service DNS, so Immich's default ML URL
+(`http://immich-machine-learning:3003`) doesn't resolve. New installs set
+`IMMICH_MACHINE_LEARNING_URL=http://127.0.0.1:3003` in `runtime.env`. Installs created
+before that change don't have the line: add it and restart `immich-web`, or set the URL in
+the Immich UI under:
 
 `Administration > Settings > Machine Learning Settings > URL`
 
-to:
-
 ```text
-http://localhost:3003
+http://127.0.0.1:3003
 ```
+
+A URL saved in the admin settings overrides the environment variable, so check there
+first if ML still fails.
 
 Then inspect `journalctl -u immich-ml` while submitting a machine-learning job.
 

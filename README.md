@@ -4,6 +4,23 @@ Install and update [Immich](https://github.com/immich-app/immich) directly in an
 
 This project is a fork of [loeeeee/immich-in-lxc](https://github.com/loeeeee/immich-in-lxc), inspired by [Immich Native](https://github.com/arter97/immich-native).
 
+## How this differs from the official Docker install
+
+Immich's [supported install](https://immich.app/docs/install/docker-compose) runs prebuilt containers with Docker Compose. This installer builds the same Immich release from source and runs it as ordinary systemd services, with no Docker in the guest.
+
+| | Official Docker Compose | This installer |
+| --- | --- | --- |
+| How it runs | Containers for the server, ML, Postgres and Redis | `immich-web` and `immich-ml` systemd services; Postgres 17 and Redis from the OS |
+| Install and update | `docker compose pull`, a few minutes | Compiles the media libraries and Immich: from about 15 minutes to an hour, depending on CPU |
+| Media libraries | Bundled in the image | Built from the same pinned [base-images](https://github.com/immich-app/base-images) set as the matching Immich release |
+| New releases | Same day | As soon as you set the new tag, but a release that changes the build can need an installer fix first |
+| In a Proxmox LXC | Needs Docker inside the container, which Proxmox advises against (it recommends a VM for Docker) | Runs directly in an unprivileged container |
+| Support | Supported by the Immich team | Community project; report problems here, not to Immich |
+
+**Who it's for:** people who run Immich in a Proxmox (or other) LXC container and don't want Docker inside it, and people who prefer plain systemd services, OS-managed Postgres, and logs in `journalctl` over containers.
+
+**Who should use Docker instead:** anyone who wants the fastest updates, the Immich team's support, or the least maintenance. If Docker already runs well on your host, the official install is the simpler choice.
+
 ## Supported systems
 
 - Ubuntu 24.04
@@ -26,163 +43,73 @@ Use a fresh container or VM and take a snapshot before installing. The commands 
 | Photos and Immich-generated media | `/mnt/photos` |
 | Web interface | `http://<container-ip>:2283` |
 
-Mount the media disk at `/mnt/photos` before installing. If you deliberately want everything on the container disk, use `/home/immich/upload` as `UPLOAD_DIR` instead.
+Mount the media disk at `/mnt/photos` before installing. If you deliberately want everything on the container disk, leave out `UPLOAD_DIR` below and media goes to `/home/immich/upload`.
 
 The installation downloads and compiles large dependencies. Allow plenty of disk space and time.
 
 ## Install
 
-Follow this recipe in order. Commands marked **root** must run from a root shell; do not add `sudo` unless your guest is already configured for it.
-
-### 1. Bootstrap the host as root
+Run everything below from a **root** shell. Pick the Immich release to install from [Immich releases](https://github.com/immich-app/immich/releases); the examples use `v3.4.2`.
 
 ```bash
-apt-get update
-apt-get install -y git
+apt-get update && apt-get install -y git
 git clone https://github.com/Rakhmanov/immich-in-lxc.git /opt/immich-in-lxc-bootstrap
 cd /opt/immich-in-lxc-bootstrap
-./pre-install.sh
-```
 
-`pre-install.sh` asks for a password for the new `immich` Linux user and a password for the Immich PostgreSQL role. It then:
+# 1. System dependencies, Postgres, Redis, media libraries, service user and units
+REPO_TAG=v3.4.2 UPLOAD_DIR=/mnt/photos ./pre-install.sh
 
-- creates the `immich` service account;
-- installs and builds the system dependencies;
-- configures PostgreSQL 17, VectorChord, and Redis;
-- installs the systemd units and stable service launcher; and
-- creates the working checkout at `/home/immich/immich-in-lxc`.
+# 2. The service user must be able to write the media directory
+runuser -u immich -- test -w /mnt/photos && echo "media OK"
 
-For unattended setup, provide `USER_PASSWORD` and `DB_PASSWORD` to `pre-install.sh`. Use `RUN_USER=name` only if you intentionally want a service user other than `immich`.
+# 3. Build and deploy Immich as the service user (answer Y to the prompt)
+su - immich -c 'cd ~/immich-in-lxc && ./install.sh'
 
-### 2. Verify the media mount as root
-
-The `immich` user must be able to create files in the media directory:
-
-```bash
-test -d /mnt/photos
-runuser -u immich -- test -w /mnt/photos
-```
-
-If either command fails, stop and fix the mount or LXC UID/GID mapping. Do not work around it by running `install.sh` as root. See [Storage and filesystem layout](docs/storage-and-layout.md).
-
-### 3. Configure Immich as the service user
-
-```bash
-su - immich
-cd ~/immich-in-lxc
-test -f .env || cp example.env .env
-nano .env
-```
-
-Use this configuration for the layout above:
-
-```dotenv
-REPO_TAG=v3.3.3
-INSTALL_DIR=/home/immich
-UPLOAD_DIR=/mnt/photos
-isCUDA=false
-
-PROXY_NPM=
-PROXY_NPM_DIST=
-PROXY_POETRY=
-```
-
-`INSTALL_DIR` is the deployment root, not the installer checkout. The installer creates `/home/immich/app/upload` as a symlink to `/mnt/photos`; do not create or replace that application symlink manually.
-
-### 4. Build and deploy as the service user
-
-```bash
-./install.sh
-```
-
-Review `/home/immich/runtime.env` after installation, especially `TZ`. It contains the runtime database settings and is mode `0600`. Its stable systemd link is `/home/immich/.config/immich-in-lxc/runtime.env`.
-
-Return to the root shell when the installer finishes:
-
-```bash
-exit
-```
-
-### 5. Start and verify as root
-
-```bash
+# 4. Start and check
 systemctl daemon-reload
 systemctl enable --now immich-ml immich-web
-systemctl --no-pager --full status immich-ml immich-web
 curl --fail http://127.0.0.1:2283/api/server/ping
 ```
 
-Open `http://<container-ip>:2283`, create the first admin account, then set:
+Then open `http://<container-ip>:2283` and create the first admin account.
 
-`Administration > Settings > Machine Learning Settings > URL`
+What each step does:
 
-to:
+- **`pre-install.sh`** asks for a password for the new `immich` Linux user and one for the Immich PostgreSQL role (set `USER_PASSWORD` and `DB_PASSWORD` to skip the prompts). It installs and builds the system dependencies, configures PostgreSQL 17, VectorChord and Redis, installs the systemd units, and creates the working checkout at `/home/immich/immich-in-lxc` with its `.env`. `REPO_TAG` selects the media-library versions that match that release and is written to `.env`. `UPLOAD_DIR` is only used when `.env` is first created. Use `RUN_USER=name` only if you want a service user other than `immich`.
+- **If the media check fails**, stop and fix the mount or the LXC UID/GID mapping. Don't work around it by running `install.sh` as root. See [Storage and filesystem layout](docs/storage-and-layout.md).
+- **`install.sh`** builds Immich at `REPO_TAG` into `/home/immich/app` and links `/home/immich/app/upload` to `UPLOAD_DIR`; don't create or replace that link yourself. Other settings, such as the ML accelerator (`isCUDA`) and package mirrors, are in `/home/immich/immich-in-lxc/.env`; edit it before this step if you need them.
+- **Runtime settings** are in `/home/immich/runtime.env` (mode `0600`): check `TZ` there. The web service already points at the local ML service (`IMMICH_MACHINE_LEARNING_URL=http://127.0.0.1:3003`), so there's no ML URL to set in the admin settings.
 
-```text
-http://localhost:3003
-```
-
-Immich is now installed. Put a TLS reverse proxy in front of port `2283` before exposing it outside a trusted network.
+Put a TLS reverse proxy in front of port `2283` before exposing it outside a trusted network.
 
 ## Update
 
-This procedure refreshes both host dependencies and the deployed Immich application.
-
-### 1. Back up and stop Immich as root
+This refreshes both the host dependencies and the deployed Immich. Read the Immich release notes for every version in between first. As **root**:
 
 ```bash
+# 1. Back up the database and stop Immich
 install -d -o postgres -g postgres -m 0700 /var/backups/immich
 backup="/var/backups/immich/immich-$(date +%Y%m%d-%H%M%S).dump"
 runuser -u postgres -- pg_dump --format=custom --file="$backup" immich
-test -s "$backup"
-echo "Database backup: $backup"
+test -s "$backup" && echo "Database backup: $backup"
 systemctl stop immich-web immich-ml
-```
 
-Copy the database dump off the guest and take a container/VM snapshot. If `/mnt/photos` is a separate mount, confirm that it has its own backup; a guest snapshot may not include it.
-
-### 2. Update the installer checkout
-
-```bash
-su - immich
-cd ~/immich-in-lxc
-git pull --ff-only
-nano .env
-exit
-```
-
-Set `REPO_TAG` in `.env` to the version you intend to install. Compare it with `example.env` after pulling, but do not overwrite your `INSTALL_DIR`, `UPLOAD_DIR`, accelerator, or proxy settings.
-
-### 3. Refresh host dependencies as root
-
-```bash
+# 2. Update the installer, then rebuild dependencies and Immich for the new release
+su - immich -c 'cd ~/immich-in-lxc && git pull --ff-only'
 cd /home/immich/immich-in-lxc
-./pre-install.sh
-```
+REPO_TAG=v3.4.2 ./pre-install.sh
+su - immich -c 'cd ~/immich-in-lxc && ./install.sh'
 
-The pre-install stage is safe to rerun. It preserves existing passwords unless password override variables are explicitly supplied.
-
-### 4. Redeploy as the service user
-
-```bash
-su - immich
-cd ~/immich-in-lxc
-./install.sh
-exit
-```
-
-The installer replaces `/home/immich/app`. It does not delete `UPLOAD_DIR`, but a backup and snapshot are still required safeguards.
-
-### 5. Restart and verify as root
-
-```bash
+# 3. Restart and check
 systemctl daemon-reload
 systemctl restart immich-ml immich-web
-systemctl --no-pager --full status immich-ml immich-web
 curl --fail http://127.0.0.1:2283/api/server/ping
 ```
 
-If either service fails, do not repeatedly rerun the installer. Capture the logs and follow [Troubleshooting and recovery](docs/troubleshooting-and-recovery.md).
+- **Before step 2**, copy the database dump off the guest and take a container or VM snapshot. If `/mnt/photos` is a separate mount, make sure it has its own backup; a guest snapshot may not include it.
+- `pre-install.sh` is safe to rerun. It keeps existing passwords, and the rest of your `.env` (`INSTALL_DIR`, `UPLOAD_DIR`, accelerator, mirrors) is left as it is; only `REPO_TAG` is updated.
+- `install.sh` replaces `/home/immich/app`. It doesn't touch `UPLOAD_DIR`, but keep the backup and snapshot anyway.
+- If a service fails, don't keep rerunning the installer. Capture the logs and follow [Troubleshooting and recovery](docs/troubleshooting-and-recovery.md).
 
 ## Optional configurations
 

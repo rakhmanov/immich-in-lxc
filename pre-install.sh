@@ -484,7 +484,15 @@ setup_immich_repo () {
 
     if [ "$seeded_env" = "1" ]; then
         replace_key_value_line "$env_dst" "INSTALL_DIR" "$RUN_USER_HOME"
-        replace_key_value_line "$env_dst" "UPLOAD_DIR" "$RUN_USER_HOME/upload"
+        replace_key_value_line "$env_dst" "UPLOAD_DIR" "${UPLOAD_DIR:-$RUN_USER_HOME/upload}"
+        chown "$RUN_USER:$RUN_GROUP" "$env_dst"
+    fi
+
+    # REPO_TAG passed to pre-install.sh also chose the base-images ref above, so
+    # keep .env on the same tag; otherwise install.sh would build a different
+    # Immich than the media libraries were built for.
+    if [ -n "${REPO_TAG:-}" ] && [ -f "$env_dst" ]; then
+        replace_key_value_line "$env_dst" "REPO_TAG" "$REPO_TAG"
         chown "$RUN_USER:$RUN_GROUP" "$env_dst"
     fi
 
