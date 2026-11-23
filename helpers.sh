@@ -167,8 +167,12 @@ git_force_checkout() {
 
   cd "$dir"
 
-  # Make workspace disposable
-  git fetch --all --tags
+  # Make workspace disposable.
+  # Don't recurse into submodules here: with the default on-demand recursion, a
+  # cached checkout whose submodule worktrees are gone (e.g. libjxl's
+  # third_party/*) fails with "cannot chdir to ../../../../third_party/..." and
+  # aborts the whole pre-install. `git submodule update` below fetches what it needs.
+  git fetch --all --tags --recurse-submodules=no
   git reset --hard HEAD
   git clean -fdx
 
